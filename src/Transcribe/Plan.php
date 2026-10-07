@@ -54,7 +54,7 @@ final class Plan
         $partSize = Shape::positiveInt($fields['part_size_bytes'] ?? null);
         $total = Shape::positiveInt($fields['total_parts'] ?? null);
         $next = $fields['next_part_number'] ?? null;
-        if ($partSize === null || $total === null || ($next !== null && Shape::positiveInt($next) === null)) {
+        if ($partSize === null || $partSize > self::MAX_PART_BYTES || $total === null || ($next !== null && Shape::positiveInt($next) === null)) {
             throw Shape::bad('an upload plan', $status);
         }
         $urls = [];

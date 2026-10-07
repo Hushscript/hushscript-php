@@ -569,6 +569,11 @@ final class PipelineTest extends TestCase
         yield 'part size negative' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => -5])];
         yield 'part size fractional' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => 1.5])];
         yield 'part size a string' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => '8'])];
+        yield 'part size above 32 MiB' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => 32 * 1024 * 1024 + 1])];
+        yield 'part size PHP_INT_MAX' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => PHP_INT_MAX])];
+        yield 'total parts negative' => [static fn (array $b): array => self::upload($b, ['total_parts' => -1])];
+        yield 'total parts fractional' => [static fn (array $b): array => self::upload($b, ['total_parts' => 2.5])];
+        yield 'total parts a string' => [static fn (array $b): array => self::upload($b, ['total_parts' => '3'])];
         yield 'total parts zero' => [static fn (array $b): array => self::upload($b, ['total_parts' => 0])];
         yield 'total parts missing' => [static fn (array $b): array => [...$b, 'upload' => ['part_size_bytes' => 5, 'part_urls' => []]]];
         yield 'part number zero' => [static fn (array $b): array => self::upload($b, ['part_urls' => [['n' => 0, 'url' => 'https://x.example/1']]])];
@@ -599,6 +604,13 @@ final class PipelineTest extends TestCase
         self::assertNull($error->numericCode);
         self::assertNotNull($error->idempotencyKey);
         self::assertSame([], $harness->parts->sent);
+    }
+
+    public function testAPartSizeOfExactly32MiBIsUsable(): void
+    {
+        $plan = \Hushscript\Transcribe\Plan::parse(['part_size_bytes' => 32 * 1024 * 1024, 'total_parts' => 1, 'part_urls' => []]);
+
+        self::assertSame(33_554_432, $plan->partSize);
     }
 
     public function testAnEmptyCreateBodyIsABadResponse(): void
