@@ -22,14 +22,14 @@ final class Redact
     {
     }
 
-    public static function text(string $text): string
+    public static function text(#[\SensitiveParameter] string $text): string
     {
         $text = preg_replace(self::TOKEN_PATTERN, self::MARKER, $text) ?? self::MARKER;
 
         return preg_replace(self::URL_QUERY_PATTERN, '$1?'.self::QUERY_MARKER, $text) ?? self::MARKER;
     }
 
-    public static function value(mixed $value): mixed
+    public static function value(#[\SensitiveParameter] mixed $value): mixed
     {
         if (is_string($value)) {
             return self::text($value);

@@ -136,7 +136,7 @@ final class ErrorMapper
     }
 
     /** @return array<mixed> */
-    private static function parseBody(string $content): array
+    private static function parseBody(#[\SensitiveParameter] string $content): array
     {
         try {
             $parsed = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
@@ -151,7 +151,7 @@ final class ErrorMapper
      * @param  array<mixed>  $body
      * @return array<mixed>
      */
-    private static function extraDetails(array $body): array
+    private static function extraDetails(#[\SensitiveParameter] array $body): array
     {
         $details = array_filter($body, static fn (mixed $key): bool => ! in_array($key, ['error', 'code', 'details'], true), ARRAY_FILTER_USE_KEY);
         $nested = $body['details'] ?? null;
@@ -169,7 +169,7 @@ final class ErrorMapper
     /**
      * Spec 9.3: details keys follow the language convention (snake_case here), recursively.
      */
-    public static function snakeKeys(mixed $value): mixed
+    public static function snakeKeys(#[\SensitiveParameter] mixed $value): mixed
     {
         if (! is_array($value)) {
             return $value;
@@ -190,7 +190,7 @@ final class ErrorMapper
     /**
      * @return array<string, mixed>
      */
-    private static function asRecord(mixed $value): array
+    private static function asRecord(#[\SensitiveParameter] mixed $value): array
     {
         $out = [];
         if (is_array($value)) {

@@ -38,7 +38,7 @@ final class Credentials
     }
 
     /** Removes the current token, the replaced ones and anything shaped like a token from the text. */
-    public function scrub(string $text): string
+    public function scrub(#[\SensitiveParameter] string $text): string
     {
         foreach (self::$tokens[$this] ?? [] as $token) {
             if ($token === '') {
@@ -61,7 +61,7 @@ final class Credentials
         return Redact::text($text);
     }
 
-    public function scrubValue(mixed $value): mixed
+    public function scrubValue(#[\SensitiveParameter] mixed $value): mixed
     {
         if (is_string($value)) {
             return $this->scrub($value);

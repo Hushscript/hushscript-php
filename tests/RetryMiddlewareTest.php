@@ -6,6 +6,7 @@ namespace Hushscript\Tests;
 
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Psr7\NoSeekStream;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use GuzzleHttp\Psr7\Utils;
@@ -477,6 +478,43 @@ final class RetryMiddlewareTest extends TestCase
         $rig->api->request('POST', '/v1/org/members', body: ['x' => 1]);
 
         self::assertCount(2, $http->requests);
+    }
+
+    // A response body that cannot be rewound still reaches the caller
+
+    public function testASuccessBodyOnANonSeekableStreamReachesTheCaller(): void
+    {
+        $http = new FakeHttp([new Response(200, [], new NoSeekStream(Utils::streamFor('{"ok":true}')))]);
+        $rig = new Rig($http);
+
+        self::assertSame(['ok' => true], $rig->api->request('GET', '/v1/account'));
+    }
+
+    public function testAnErrorBodyOnANonSeekableStreamKeepsItsCodeAndHint(): void
+    {
+        $body = json_encode(['error' => 'insufficient_balance', 'code' => 3001, 'needed_seconds' => 1250, 'balance_seconds' => 600], JSON_THROW_ON_ERROR);
+        $http = new FakeHttp([new Response(402, [], new NoSeekStream(Utils::streamFor($body)))]);
+        $rig = new Rig($http);
+
+        try {
+            $rig->api->request('GET', '/v1/account');
+            self::fail('expected an error');
+        } catch (HushscriptException $error) {
+            self::assertSame('insufficient_balance', $error->errorCode);
+            self::assertSame(3001, $error->numericCode);
+            self::assertNotNull($error->hint);
+        }
+    }
+
+    public function testACreate429SlugIsReadFromANonSeekableStream(): void
+    {
+        $limited = new Response(429, [], new NoSeekStream(Utils::streamFor('{"error":"too_many_active_jobs","code":1}')));
+        $http = new FakeHttp([$limited, self::ok()]);
+        $rig = new Rig($http);
+
+        $rig->api->request('POST', '/v1/uploads', body: ['size_bytes' => 1, 'idempotency_key' => self::KEY]);
+
+        self::assertSame([30.0], $rig->clock->sleeps, 'the active-jobs schedule waits 30 s; the rate-limit schedule would wait 15 s');
     }
 
     // Upload create (spec 7.2, 7.5)

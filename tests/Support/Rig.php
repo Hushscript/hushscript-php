@@ -8,6 +8,7 @@ use Hushscript\Api;
 use Hushscript\Credentials;
 use Hushscript\Http\RetryMiddleware;
 use Hushscript\Log;
+use Psr\Http\Client\ClientInterface;
 
 /** A middleware and an Api wired to a fake client and a fake clock, with no jitter. */
 final class Rig
@@ -29,10 +30,11 @@ final class Rig
         int $maxRetries = 3,
         string $token = Tokens::TEST,
         string $logLevel = 'debug',
+        ?ClientInterface $inner = null,
     ) {
         $this->credentials = new Credentials($token);
         $this->transport = new RetryMiddleware(
-            $http,
+            $inner ?? $http,
             $this->credentials,
             self::BASE,
             $clock,

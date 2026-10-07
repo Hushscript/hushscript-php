@@ -12,7 +12,7 @@ FROM php${PHP_VERSION} AS pcov-build
 # pcov is a compiled extension and the official image carries no compiler: the installer fetches the
 # build tools, compiles it, and only the .so leaves this stage.
 COPY --from=ipe /usr/bin/install-php-extensions /usr/local/bin/
-RUN install-php-extensions pcov \
+RUN install-php-extensions pcov-1.0.12 \
   && mkdir -p /out \
   && cp "$(php-config --extension-dir)/pcov.so" /out/pcov.so
 
