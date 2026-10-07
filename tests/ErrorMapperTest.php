@@ -124,7 +124,7 @@ final class ErrorMapperTest extends TestCase
             ['needed_seconds' => 1250, 'balance_seconds' => 600, 'held_seconds' => 5, 'deep' => ['some_key' => [['inner_key' => 1]]]],
             $error->details,
         );
-        self::assertSame('Not enough minutes: 21 needed, 10 available. Buy a pack with hs.buy("300min") or in the app.', $error->hint);
+        self::assertSame('Not enough minutes: 21 needed, 10 available. Buy a pack with the SDK\'s buy method or in the app.', $error->hint);
     }
 
     public function testANonObjectDetailsValueIsKept(): void
