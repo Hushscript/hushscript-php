@@ -49,7 +49,7 @@ final class Pipeline
         $options = Options::forTranscribe($rawOptions);
         $source = Source::open($path);
         [$size, $duration] = Preflight::media($source, $options);
-        Preflight::account($this->api->request('GET', '/v1/account'), $duration, $options);
+        Preflight::account($this->api->request('GET', '/v1/account'), $duration);
         $key = $options->newKey();
         $state = Resume::state('', $key, $size, $duration);
         $body = Preflight::createBody($size, $duration, $options, $key);
