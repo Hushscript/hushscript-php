@@ -129,7 +129,7 @@ final class RetryMiddleware implements ClientInterface
             $attempt++;
             if (! $decision->retry) {
                 if ($response === null) {
-                    throw $this->failureError($class, $route, $method, $label, $summary);
+                    throw $this->failureError($class, $route, $method, $label, $summary, $outcome->notSent);
                 }
 
                 return $response;
@@ -173,11 +173,11 @@ final class RetryMiddleware implements ClientInterface
         return new Outcome($status, ErrorMapper::parseRetryAfter($response->getHeaderLine('Retry-After') ?: null), $slug);
     }
 
-    private function failureError(RetryClass $class, ?string $route, string $method, string $label, string $summary): HushscriptException
+    private function failureError(RetryClass $class, ?string $route, string $method, string $label, string $summary, bool $notSent): HushscriptException
     {
         $cause = new \RuntimeException($summary);
         $where = "{$method} {$label}";
-        if ($class === RetryClass::Never) {
+        if ($class === RetryClass::Never && ! $notSent) {
             return new OutcomeUnknownError(
                 "No response arrived for {$where}.",
                 'outcome_unknown',

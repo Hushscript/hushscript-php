@@ -42,7 +42,7 @@ final class RedactionTest extends TestCase
         self::assertStringNotContainsString(Tokens::TEST, $text, $where);
         self::assertStringNotContainsString(self::TAIL, $text, $where);
         self::assertStringNotContainsString('0123456789abcdef0123456789abcdef', $text, $where);
-        self::assertStringNotContainsString('Bearer hsr', $text, $where);
+        self::assertStringNotContainsString('Bearer hsr', str_replace(Redact::MARKER, '', $text), $where);
     }
 
     /** @param list<string> $texts */

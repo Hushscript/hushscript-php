@@ -504,9 +504,9 @@ final class RetryMiddlewareTest extends TestCase
                 self::assertCount(1, $http->requests);
             }
             $lost = new FakeHttp([self::lostResponse(), self::ok()]);
-            $this->expectNotToPerformAssertions();
             try {
                 (new Rig($lost))->api->request('POST', '/v1/uploads', body: $body);
+                self::fail('expected a NetworkError');
             } catch (NetworkError) {
                 self::assertCount(1, $lost->requests);
             }
@@ -618,7 +618,7 @@ final class RetryMiddlewareTest extends TestCase
 
     public function testUnkeyedCreatesAndOtherPathsAreHandledByPathNotByKey(): void
     {
-        $http = new FakeHttp(array_fill(0, 6, self::ok()));
+        $http = new FakeHttp(array_fill(0, 7, self::ok()));
         $rig = new Rig($http);
 
         for ($i = 0; $i < 5; $i++) {
@@ -783,13 +783,10 @@ final class RetryMiddlewareTest extends TestCase
         })());
         $request = (new Request('POST', Rig::BASE.'/v1/billing/purchase'))->withBody($stream);
 
-        $this->expectException(\Throwable::class);
-        try {
-            $rig->transport->sendRequest($request);
-            self::fail('expected the 503 to surface');
-        } finally {
-            self::assertCount(1, $http->requests);
-        }
+        $response = $rig->transport->sendRequest($request);
+
+        self::assertSame(503, $response->getStatusCode());
+        self::assertCount(1, $http->requests);
     }
 
     public function testEachAttemptSendsTheWholeBody(): void

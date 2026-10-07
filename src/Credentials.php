@@ -48,9 +48,12 @@ final class Credentials
             // An API that echoes only the secret half is just as much a leak.
             $position = strpos($token, 'pat.');
             if ($position !== false) {
-                $tail = substr($token, $position + 4);
-                if (strlen($tail) >= self::MIN_SECRET_TAIL) {
-                    $text = str_replace($tail, Redact::MARKER, $text);
+                $afterPrefix = substr($token, $position + 4);
+                $dot = strrpos($afterPrefix, '.');
+                foreach ($dot === false ? [$afterPrefix] : [$afterPrefix, substr($afterPrefix, $dot + 1)] as $tail) {
+                    if (strlen($tail) >= self::MIN_SECRET_TAIL) {
+                        $text = str_replace($tail, Redact::MARKER, $text);
+                    }
                 }
             }
         }
