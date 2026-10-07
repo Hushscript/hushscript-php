@@ -147,9 +147,9 @@ new one.
 
 A purchase is retried at most once, on a network error, a 502 or a 503, with the same idempotency
 key, so those retries cannot charge you twice. When `buy()` still gives up after the request was
-sent (the connection dropped twice, or the answer was not one the SDK can use), the card may have
-been charged. Every such error carries `idempotencyKey`; ask again with it and the purchase can
-never happen twice:
+sent (the connection dropped twice, the answer was not one the SDK can use, or a 401 or 429 followed
+a retry whose first attempt may have charged), the card may have been charged. Every such error
+carries `idempotencyKey`; ask again with it and the purchase can never happen twice:
 
 ```php
 use Hushscript\Exception\HushscriptException;
@@ -157,9 +157,9 @@ use Hushscript\Exception\HushscriptException;
 try {
     $purchase = $hs->buy('300min', true);
 } catch (HushscriptException $error) {
-    $refused = in_array($error->status, [400, 401, 402, 403, 404, 422, 429], true);
+    $refused = in_array($error->status, [400, 402, 403, 404, 422], true);
     if ($error->idempotencyKey === null || $refused) {
-        throw $error; // only these refusals charged nothing; any other failure keeps the key for a retry
+        throw $error; // only these refusals charged nothing; any other failure, a 401 or 429 included, keeps the key for a retry
     }
     $purchase = $hs->buy('300min', true, $error->idempotencyKey);
 }
@@ -345,8 +345,8 @@ An explicit option beats its environment variable. The base URL must be `https:/
 
 A custom `http_client` must not follow redirects and must return 4xx and 5xx answers as responses.
 The SDK still adds the retry and authorization rules around it, and sends the token only to the
-configured API origin. If the client has a `withOptions()` method (Symfony's HttpClient does), the SDK
-calls `withOptions(['max_redirects' => 0])` on it; any other client must be configured that way by you.
+configured API origin. If the client has a `withOptions()` method, the SDK calls
+`withOptions(['max_redirects' => 0])` on it; any other client must be configured that way by you.
 
 Requests that must never be replayed (account claim, credential rotation, signup, unkeyed creates,
 purchases and every other mutation) have to go out over a fresh connection. libcurl otherwise replays
@@ -354,7 +354,10 @@ a request on a kept-alive connection that the server closed after the body was s
 see it twice. With the default Guzzle client, and with any `GuzzleHttp\ClientInterface` you pass, the
 SDK requests a fresh, non-reusable connection for those calls. A custom PSR-18 client that is not a
 Guzzle client must itself never retry or replay a request on a reused connection, or must open a new
-connection per request; the SDK cannot enforce this on a foreign client.
+connection per request; the SDK cannot enforce this on a foreign client. Symfony HttpClient does not
+meet this rule: it cannot open a fresh connection per non-replayable request, and libcurl can resend
+a POST on a pooled connection that died. Guzzle is the supported transport for `buy`, claim, rotate,
+signup and an unkeyed create.
 
 ## Laravel
 
@@ -403,8 +406,11 @@ $account = $hs->api()->request('GET', '/v1/account');
 The SDK sends no telemetry. The only client identification is the `User-Agent` header
 (`hushscript-php/<version> php/<version>`). Logging is off by default; `HUSHSCRIPT_LOG=debug` (or
 `'log_level' => 'debug'`) writes one line per request with the method, path, status and timing, and
-never a header, body, title or transcript text. The token never appears in `var_dump`, `print_r`,
-`var_export`, `json_encode`, exception messages or traces, and `serialize()` of the client throws.
+never a header, body, title or transcript text. The client's token never appears in `var_dump`,
+`print_r`, `var_export`, `json_encode`, exception messages or traces, and `serialize()` of the client
+throws. Results that hand you a secret (the claim secret, a new token) show it as `[redacted]` in
+`var_dump` and `print_r`, but carry it in `json_encode`, `serialize` and `var_export`, which are your
+own export.
 
 ## Server only
 

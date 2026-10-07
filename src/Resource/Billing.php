@@ -89,7 +89,7 @@ final class Billing
      *
      * @throws HushscriptException
      */
-    public function buy(string $pack, bool $acknowledgeNoRefund = false, ?string $idempotencyKey = null): Purchase
+    public function buy(string $pack, bool $acknowledgeNoRefund = false, #[\SensitiveParameter] ?string $idempotencyKey = null): Purchase
     {
         if ($pack === '') {
             throw new PreflightError('pack is a pack id such as 300min.', 'invalid_option');

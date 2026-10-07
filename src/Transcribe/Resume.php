@@ -17,13 +17,13 @@ final class Resume
 
     private function __construct(
         public readonly string $jobId,
-        public readonly string $idempotencyKey,
+        #[\SensitiveParameter] public readonly string $idempotencyKey,
         public readonly int $size,
         public readonly int $durationSeconds,
     ) {
     }
 
-    public static function state(string $jobId, string $idempotencyKey, int $size, int $durationSeconds): self
+    public static function state(string $jobId, #[\SensitiveParameter] string $idempotencyKey, int $size, int $durationSeconds): self
     {
         return new self($jobId, $idempotencyKey, $size, $durationSeconds);
     }

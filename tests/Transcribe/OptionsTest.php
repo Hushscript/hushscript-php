@@ -114,14 +114,6 @@ final class OptionsTest extends TestCase
         self::assertSame(['translation_targets' => ['es', 'fr']], $wire);
     }
 
-    public function testTheEstimateAddsAQuarterPerTranslationAndDoublesForMedical(): void
-    {
-        self::assertSame(21, Preflight::estimate(21, false, []));
-        self::assertSame(42, Preflight::estimate(21, true, []));
-        self::assertSame(32, Preflight::estimate(21, false, ['es', 'fr']));
-        self::assertSame(48, Preflight::estimate(21, true, ['es']));
-    }
-
     public function testResumeAndWaitTakeTheirOwnOptionsOnly(): void
     {
         self::assertSame(2, Options::forResume(['concurrency' => 2])->concurrency);

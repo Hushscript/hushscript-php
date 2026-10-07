@@ -59,7 +59,7 @@ final class Options
         public readonly ?bool $autoInsights,
         public readonly ?string $matterCode,
         public readonly float|int|null $durationSeconds,
-        public readonly ?string $idempotencyKey,
+        #[\SensitiveParameter] public readonly ?string $idempotencyKey,
         public readonly int $concurrency,
         public readonly float $waitTimeout,
         public readonly ?\Closure $onProgress,

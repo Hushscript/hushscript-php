@@ -337,6 +337,17 @@ final class AgentTest extends TestCase
         self::assertSame(Tokens::ROTATED, $account->token);
     }
 
+    public function testDeliberateExportOfTheClaimedAccountCarriesTheToken(): void
+    {
+        $http = new FakeHttp([FakeHttp::json(200, self::claimed())]);
+
+        $account = Client::agentClaim('sg_1', 'cs_secret_0123456789ab', self::options($http));
+
+        $json = json_encode($account, JSON_THROW_ON_ERROR);
+        self::assertStringContainsString(Tokens::ROTATED, $json);
+        self::assertSame(['token' => Tokens::ROTATED], array_intersect_key((array) json_decode($json, true, 512, JSON_THROW_ON_ERROR), ['token' => true]));
+    }
+
     /** @return iterable<string, array{int, string, string, class-string<HushscriptException>}> */
     public static function claimErrors(): iterable
     {
@@ -402,6 +413,25 @@ final class AgentTest extends TestCase
             self::assertNotNull($error->getPrevious());
         }
         self::assertSame(1, $http->count());
+    }
+
+    public function testAnyFailureWhileUsingAClaimAnswerThatCarriedATokenIsAnUnknownOutcomeWithTheToken(): void
+    {
+        $rig = new Rig(new FakeHttp([FakeHttp::json(200, self::claimed())]));
+        $minted = new \ReflectionMethod(Agent::class, 'minted');
+
+        try {
+            $minted->invoke(null, $rig->exchange, $rig->credentials, '/v1/agent/accounts/sg_1/claim', ['claim_secret' => 'cs_secret_0123456789ab'], \Hushscript\Http\Routes::CLAIM, static function (\Hushscript\Http\Body $answer, ?string $seen): never {
+                throw new \LogicException('not a bad body '.$seen);
+            });
+            self::fail('expected OutcomeUnknownError');
+        } catch (OutcomeUnknownError $error) {
+            self::assertSame(Tokens::ROTATED, $error->receivedToken());
+            self::assertSame(self::CLAIM_HINT, $error->hint);
+            self::assertInstanceOf(\RuntimeException::class, $error->getPrevious());
+            self::assertStringContainsString('not a bad body', $error->getPrevious()->getMessage());
+            self::assertStringNotContainsString(Tokens::ROTATED, $error->getMessage().$error->getPrevious()->getMessage());
+        }
     }
 
     public function testAFailureBeforeTheClaimWasSentIsPlainNetworkErrorAndStillNotReplayed(): void
@@ -735,6 +765,16 @@ final class AgentTest extends TestCase
 
         self::assertStringNotContainsString(Tokens::ROTATED, print_r($rotated, true));
         self::assertSame(Tokens::ROTATED, $rotated->token);
+    }
+
+    public function testDeliberateExportOfTheRotatedTokenAndTheClaimSecretCarriesThem(): void
+    {
+        $http = new FakeHttp([FakeHttp::json(200, ['pat' => Tokens::ROTATED, 'pat_id' => 'pat_9', 'scopes' => ['a']])]);
+        $rotated = self::client($http)->agent()->rotateToken();
+        $signup = Client::agentSignup(self::request(), self::options(new FakeHttp([FakeHttp::json(200, self::signedUp())])));
+
+        self::assertStringContainsString(Tokens::ROTATED, json_encode($rotated, JSON_THROW_ON_ERROR));
+        self::assertStringContainsString('cs_0123456789abcdef0123', json_encode($signup, JSON_THROW_ON_ERROR));
     }
 
     private static function unreadableBody(): Response

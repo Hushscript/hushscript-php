@@ -569,6 +569,11 @@ final class PipelineTest extends TestCase
         yield 'part size negative' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => -5])];
         yield 'part size fractional' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => 1.5])];
         yield 'part size a string' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => '8'])];
+        yield 'part size above 32 MiB' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => 32 * 1024 * 1024 + 1])];
+        yield 'part size PHP_INT_MAX' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => PHP_INT_MAX])];
+        yield 'total parts negative' => [static fn (array $b): array => self::upload($b, ['total_parts' => -1])];
+        yield 'total parts fractional' => [static fn (array $b): array => self::upload($b, ['total_parts' => 2.5])];
+        yield 'total parts a string' => [static fn (array $b): array => self::upload($b, ['total_parts' => '3'])];
         yield 'total parts zero' => [static fn (array $b): array => self::upload($b, ['total_parts' => 0])];
         yield 'total parts missing' => [static fn (array $b): array => [...$b, 'upload' => ['part_size_bytes' => 5, 'part_urls' => []]]];
         yield 'part number zero' => [static fn (array $b): array => self::upload($b, ['part_urls' => [['n' => 0, 'url' => 'https://x.example/1']]])];
@@ -599,6 +604,13 @@ final class PipelineTest extends TestCase
         self::assertNull($error->numericCode);
         self::assertNotNull($error->idempotencyKey);
         self::assertSame([], $harness->parts->sent);
+    }
+
+    public function testAPartSizeOfExactly32MiBIsUsable(): void
+    {
+        $plan = \Hushscript\Transcribe\Plan::parse(['part_size_bytes' => 32 * 1024 * 1024, 'total_parts' => 1, 'part_urls' => []]);
+
+        self::assertSame(33_554_432, $plan->partSize);
     }
 
     public function testAnEmptyCreateBodyIsABadResponse(): void
@@ -745,29 +757,17 @@ final class PipelineTest extends TestCase
         self::assertSame([], $harness->api->requests);
     }
 
-    public function testAnEstimateOverTheBalanceIsRefusedBeforeTheCreate(): void
+    public function testAnAccountWithNoBalanceStillSendsTheCreateAndSurfacesTheServers402(): void
     {
         $harness = new PipelineHarness();
-        $harness->api->on('GET', '/v1/account', PipelineHarness::json(200, ['balance_seconds' => 10, 'held_seconds' => 4]));
+        $harness->api->on('GET', '/v1/account', PipelineHarness::json(200, ['balance_seconds' => 0, 'held_seconds' => 4]));
+        $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(402, ['error' => 'insufficient_balance', 'code' => 3001, 'needed_seconds' => 21, 'balance_seconds' => 0, 'held_seconds' => 4]));
 
         $error = self::failure($harness, InsufficientBalanceError::class);
 
-        self::assertSame(['needed_seconds' => 21, 'balance_seconds' => 10, 'held_seconds' => 4], $error->details);
-        self::assertNull($error->status);
-        self::assertSame(['GET /v1/account'], $harness->api->lines());
-    }
-
-    public function testTheEstimateCountsMedicalAndTranslation(): void
-    {
-        $harness = new PipelineHarness();
-        $harness->api->on('GET', '/v1/account', PipelineHarness::json(200, ['balance_seconds' => 30]));
-
-        try {
-            self::go($harness, ['medical' => true, 'language' => 'en']);
-            self::fail('expected an InsufficientBalanceError');
-        } catch (InsufficientBalanceError $error) {
-            self::assertSame(42, $error->details['needed_seconds']);
-        }
+        self::assertSame(402, $error->status);
+        self::assertSame(['needed_seconds' => 21, 'balance_seconds' => 0, 'held_seconds' => 4], $error->details);
+        self::assertSame(['GET /v1/account', 'POST /v1/uploads'], $harness->api->lines());
     }
 
     public function testAnUploadThatWouldPassTheDailyLimitIsRefused(): void

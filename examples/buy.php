@@ -17,10 +17,11 @@ require __DIR__.'/../vendor/autoload.php';
 
 const NOTICE = 'Minutes are added to your account instantly after payment. All purchases are final and non-refundable.';
 
-// The statuses of an answer that charged nothing: the API refused the purchase (4021 and 4023 are 403, a rate
-// limit 429). Any other outcome after the request was sent, a 408, a 409, a 5xx, no status at all or an
-// unusable answer, may have reached the card.
-const REFUSALS = [400, 401, 402, 403, 404, 422, 429];
+// The statuses of an answer that charged nothing: refusals the server decides from the request alone (400, a 403
+// such as 4021 or 4023, 404, 422) and a 402, which comes after the server's replay of a completed purchase. A 401
+// or a 429 is not on the list: both run before that replay, so after the SDK's one retry they can follow a first
+// attempt that charged the card. Any other outcome after the request was sent may have reached the card too.
+const REFUSALS = [400, 402, 403, 404, 422];
 
 /** True when the purchase request went out and the answer was not one of the refusals. */
 function mayHaveCharged(HushscriptException $error): bool
