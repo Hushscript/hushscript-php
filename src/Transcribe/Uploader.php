@@ -46,7 +46,7 @@ final class Uploader
 
     private readonly UrlBook $book;
 
-    /** The longest a part request has held the loop when its transport answered before `send` returned. */
+    /** How long the latest part request held the loop, when its transport answered before `send` returned; 0 for one that is still in flight. */
     private float $blocked = 0.0;
 
     /**
@@ -197,9 +197,8 @@ final class Uploader
         $request = $run->proxied ? $this->proxiedRequest($run) : $this->directRequest($run);
         $run->startedAt = $this->clock->now();
         $promise = $this->transport->send($request, self::PART_TIMEOUT);
-        if ($promise->getState() !== PromiseInterface::PENDING) {
-            $this->blocked = max($this->blocked, $this->clock->now() - $run->startedAt);
-        }
+        // The latest part, not the longest: one slow part must not make every later start ping.
+        $this->blocked = $promise->getState() !== PromiseInterface::PENDING ? $this->clock->now() - $run->startedAt : 0.0;
         $run->promise = $promise;
         $promise->then(
             static function (ResponseInterface $response) use ($run): void {

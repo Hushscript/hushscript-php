@@ -27,6 +27,8 @@ final class Heartbeat
 
     private bool $stopped = false;
 
+    private bool $beating = false;
+
     private ?AuthenticationError $failure = null;
 
     /**
@@ -60,11 +62,12 @@ final class Heartbeat
     /** Sends a ping now (the one before `complete`), unless the beat has ended. */
     public function beat(): void
     {
-        if ($this->stopped) {
+        if ($this->stopped || $this->beating) {
             return;
         }
         // Scheduled from the moment it is sent, so a slow ping does not make the next one burst.
         $this->last = $this->clock->now();
+        $this->beating = true;
         try {
             ($this->ping)();
         } catch (AuthenticationError $failure) {
@@ -79,6 +82,8 @@ final class Heartbeat
         } catch (\Throwable $failure) {
             // A ping that breaks must not end the upload.
             $this->log?->note('heartbeat ping failed ('.$failure::class.')');
+        } finally {
+            $this->beating = false;
         }
     }
 

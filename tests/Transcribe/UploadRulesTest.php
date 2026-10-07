@@ -11,6 +11,7 @@ use Hushscript\Exception\UploadError;
 use Hushscript\Tests\Support\FakeClock;
 use Hushscript\Tests\Support\FakeIdleClock;
 use Hushscript\Tests\Support\PipelineHarness;
+use Hushscript\Transcribe\Heartbeat;
 use Hushscript\Transcribe\SyncTransport;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -149,6 +150,53 @@ final class UploadRulesTest extends TestCase
         self::assertGreaterThanOrEqual(60.0, array_sum($clock->sleeps), 'the wait was a minute, taken in slices');
         self::assertNotNull($completedAt);
         self::assertLessThanOrEqual(120.0, self::longestGap($beats, $completedAt));
+    }
+
+    public function testPingsAnsweredWithARetryAfterNeverStartAnotherPingFromInsideTheirOwnWait(): void
+    {
+        $clock = new FakeIdleClock();
+        $harness = new PipelineHarness(clock: $clock, totalParts: 20, script: static fn (array $request): array => [PipelineHarness::stored('"e'.self::partNumber($request['url']).'"'), 25.0]);
+        $clock->nextEvent = $harness->parts->nextRelease(...);
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', self::page($harness, 17, 20));
+        $depth = 0;
+        $hits = 0;
+        $harness->api->on('POST', '/v1/uploads/[^/]+/heartbeat', static function () use (&$depth, &$hits): Response {
+            $hits++;
+            $beats = count(array_filter(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS), static fn (array $frame): bool => ($frame['class'] ?? '') === Heartbeat::class && $frame['function'] === 'beat'));
+            $depth = max($depth, $beats);
+
+            return new Response(429, ['Retry-After' => '60', 'Content-Type' => 'application/json'], '{"error":"rate_limited","code":5000}');
+        });
+
+        self::go($harness);
+
+        self::assertSame(1, $depth, 'a ping that waits for its own retry is never interrupted by another ping');
+        self::assertLessThanOrEqual(24, $hits, 'bounded: four attempts per ping and a ping per 120 s at the most');
+        self::assertCount(1, $harness->api->to('POST', '/v1/uploads/[^/]+/complete'), 'the upload goes on and completes');
+    }
+
+    public function testAfterOneLongBlockThePingsKeepTheIntervalInsteadOfOnePerPart(): void
+    {
+        $clock = new FakeClock();
+        $client = new class ($clock) implements ClientInterface {
+            private int $calls = 0;
+
+            public function __construct(private readonly FakeClock $clock)
+            {
+            }
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                $this->clock->time += $this->calls++ === 0 ? 250.0 : 1.0;
+
+                return PipelineHarness::stored();
+            }
+        };
+        $harness = new PipelineHarness(clock: $clock, totalParts: 12, transport: new SyncTransport($client));
+
+        self::go($harness, ['concurrency' => 1]);
+
+        self::assertLessThanOrEqual(3, count($harness->api->to('POST', '/v1/uploads/[^/]+/heartbeat')), 'the long first part is followed by one ping, not one per fast part');
     }
 
     public function testADirectPutThatIsForbiddenAfterASuccessGetsOneFreshPageNotTwo(): void
