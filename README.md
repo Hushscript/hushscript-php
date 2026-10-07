@@ -147,9 +147,9 @@ new one.
 
 A purchase is retried at most once, on a network error, a 502 or a 503, with the same idempotency
 key, so those retries cannot charge you twice. When `buy()` still gives up after the request was
-sent (the connection dropped twice, or the answer was not one the SDK can use), the card may have
-been charged. Every such error carries `idempotencyKey`; ask again with it and the purchase can
-never happen twice:
+sent (the connection dropped twice, the answer was not one the SDK can use, or a 401 or 429 followed
+a retry whose first attempt may have charged), the card may have been charged. Every such error
+carries `idempotencyKey`; ask again with it and the purchase can never happen twice:
 
 ```php
 use Hushscript\Exception\HushscriptException;
@@ -157,9 +157,9 @@ use Hushscript\Exception\HushscriptException;
 try {
     $purchase = $hs->buy('300min', true);
 } catch (HushscriptException $error) {
-    $refused = in_array($error->status, [400, 401, 402, 403, 404, 422, 429], true);
+    $refused = in_array($error->status, [400, 402, 403, 404, 422], true);
     if ($error->idempotencyKey === null || $refused) {
-        throw $error; // only these refusals charged nothing; any other failure keeps the key for a retry
+        throw $error; // only these refusals charged nothing; any other failure, a 401 or 429 included, keeps the key for a retry
     }
     $purchase = $hs->buy('300min', true, $error->idempotencyKey);
 }
