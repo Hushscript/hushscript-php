@@ -9,6 +9,7 @@ use Hushscript\Exception\ApiError;
 use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\PreflightError;
 use Hushscript\Resource\Account;
+use Hushscript\Resource\Jobs;
 use Hushscript\Resource\Transcripts;
 use Hushscript\Tests\Support\FakeHttp;
 use Hushscript\Tests\Support\PipelineHarness;
@@ -226,5 +227,81 @@ final class ResourcesTest extends TestCase
             self::assertNull($error->numericCode);
             self::assertStringNotContainsString('"x"', $error->getMessage(), 'a value is never echoed');
         }
+    }
+
+    public function testJobsListSendsActiveAndWalksThePages(): void
+    {
+        $jobs = [PipelineHarness::jobBody('processing'), PipelineHarness::jobBody('queued', ['id' => 'job_2'])];
+        $http = new FakeHttp([
+            FakeHttp::json(200, ['jobs' => [$jobs[0]], 'next_cursor' => 'c2']),
+            FakeHttp::json(200, ['jobs' => [$jobs[1]], 'next_cursor' => '']),
+        ]);
+
+        $listed = iterator_to_array((new Jobs((new Rig($http))->exchange, (new PipelineHarness())->pipeline))->list(['active' => true]), false);
+
+        self::assertSame(['job_1', 'job_2'], array_map(static fn ($job): string => $job->id, $listed));
+        self::assertSame('active=true', self::sorted($http->requests[0]->getUri()->getQuery()));
+        self::assertSame('active=true&cursor=c2', self::sorted($http->requests[1]->getUri()->getQuery()));
+    }
+
+    public function testJobsListRefusesAnUnknownOptionAtTheCall(): void
+    {
+        $this->expectException(PreflightError::class);
+
+        (new Jobs((new Rig(new FakeHttp([])))->exchange, (new PipelineHarness())->pipeline))->list(['actve' => true]);
+    }
+
+    public function testJobsGetReturnsTheFullShapeAndPassesAnUnknownStateThrough(): void
+    {
+        $http = new FakeHttp([FakeHttp::json(200, PipelineHarness::jobBody('reticulating', ['transcript_id' => null, 'private_result_key' => 'x', 'fetch_url' => 'https://secret.example/']))]);
+
+        $job = (new Jobs((new Rig($http))->exchange, (new PipelineHarness())->pipeline))->get('job_1');
+
+        self::assertSame('reticulating', $job->state);
+        self::assertSame('standard', $job->mode);
+        self::assertSame(1760000000, $job->createdAt->getTimestamp());
+        self::assertStringNotContainsString('secret.example', print_r($job, true));
+        self::assertStringNotContainsString('private_result', print_r($job, true));
+    }
+
+    public function testJobsGetRefusesAnUnusableIdBeforeAnyRequestAndAJobWithoutAStateIsBadResponse(): void
+    {
+        $http = new FakeHttp([FakeHttp::json(200, ['id' => 'job_1'])]);
+        $jobs = new Jobs((new Rig($http))->exchange, (new PipelineHarness())->pipeline);
+
+        try {
+            $jobs->get('..');
+            self::fail('expected invalid_option');
+        } catch (PreflightError $error) {
+            self::assertSame('invalid_option', $error->errorCode);
+            self::assertCount(0, $http->requests);
+        }
+        try {
+            $jobs->get('job_1');
+            self::fail('expected bad_response');
+        } catch (ApiError $error) {
+            self::assertSame('bad_response', $error->errorCode);
+        }
+    }
+
+    public function testJobsWaitReturnsAFailedJobInsteadOfRaising(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('GET', '/v1/jobs/job_1', PipelineHarness::json(200, PipelineHarness::jobBody('failed', ['error' => 'undecodable', 'failure_kind' => 'media_undecodable'])));
+
+        $job = $harness->jobsWait('job_1', []);
+
+        self::assertSame('failed', $job->state);
+        self::assertSame('media_undecodable', $job->failureKind);
+    }
+
+    public function testJobsWaitReturnsADoneJob(): void
+    {
+        $harness = new PipelineHarness();
+
+        $job = $harness->jobsWait('job_1', []);
+
+        self::assertSame('done', $job->state);
+        self::assertSame('tr_1', $job->transcriptId);
     }
 }
