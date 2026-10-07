@@ -89,6 +89,11 @@ final class RetryMiddleware implements ClientInterface
         $path = $onBase ? $uri->getPath() : '';
         $method = strtoupper($request->getMethod());
         $class = Routes::classify($method, $path);
+        if (! $onBase && $method === 'PUT') {
+            // R56: a PUT to a signed storage URL replays the same bytes for the same part, so it is a part
+            // upload (retried, connection reuse allowed), never an unclassified mutation.
+            $class = RetryClass::Part;
+        }
         $route = Routes::unrecoverable($method, $path);
         if ($class === RetryClass::Create && ! $this->hasIdempotencyKey($request)) {
             // Only a keyed create is a safe replay; without a key it is any other mutation.
@@ -174,7 +179,7 @@ final class RetryMiddleware implements ClientInterface
      * retry table nor the not-sent test can see it. A Guzzle client is told to open a fresh,
      * non-reusable connection; any other PSR-18 client has to guarantee this itself (README).
      */
-    private function transmit(RequestInterface $outgoing, RetryClass $class): ResponseInterface
+    private function transmit(#[\SensitiveParameter] RequestInterface $outgoing, RetryClass $class): ResponseInterface
     {
         $replayable = match ($class) {
             RetryClass::Safe, RetryClass::Part, RetryClass::Complete, RetryClass::Create => true,
@@ -184,14 +189,28 @@ final class RetryMiddleware implements ClientInterface
             return $this->inner->sendRequest($outgoing);
         }
 
-        // Guzzle's stream handler, used without ext-curl, ignores the curl option and opens a connection per request.
+        // The request-level 'curl' option replaces the client's own defaults wholesale, so they are carried over
+        // here (a CONNECT_TO or RESOLVE rule must survive); ours win on the two reuse keys. Guzzle's stream
+        // handler, used without ext-curl, ignores the option and opens a connection per request.
         $options = [
             'allow_redirects' => false,
             'http_errors' => false,
-            'curl' => [self::CURLOPT_FRESH_CONNECT => true, self::CURLOPT_FORBID_REUSE => true],
+            'curl' => array_replace(self::configuredCurl($this->inner), [self::CURLOPT_FRESH_CONNECT => true, self::CURLOPT_FORBID_REUSE => true]),
         ];
 
         return $this->inner->send($outgoing, $options);
+    }
+
+    /**
+     * @return array<mixed>
+     */
+    private static function configuredCurl(GuzzleClientInterface $client): array
+    {
+        // getConfig() is deprecated in Guzzle 7 but is the only way to read a client's defaults; the option
+        // is read once per non-replayable request.
+        $curl = $client->getConfig('curl'); // @phpstan-ignore method.deprecated
+
+        return is_array($curl) ? $curl : [];
     }
 
     private function outcomeOf(#[\SensitiveParameter] ResponseInterface $response, RetryClass $class): Outcome

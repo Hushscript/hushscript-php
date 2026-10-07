@@ -25,15 +25,16 @@ final class Client
     public function __construct(#[\SensitiveParameter] ?string $token = null, #[\SensitiveParameter] array $options = [])
     {
         $this->config = Config::resolve($token, $options);
+        $log = new Log($this->config->logLevel);
         $inner = $this->config->httpClient === null
             ? self::defaultHttpClient($this->config->timeout)
-            : self::withoutRedirects($this->config->httpClient);
+            : self::withoutRedirects($this->config->httpClient, $log);
         $transport = new RetryMiddleware(
             $inner,
             $this->config->credentials,
             $this->config->baseUrl,
             $this->config->clock,
-            new Log($this->config->logLevel),
+            $log,
             $this->config->maxRetries,
         );
         $this->api = new Api($transport, $this->config->credentials, $this->config->baseUrl);
@@ -46,16 +47,42 @@ final class Client
 
     /**
      * Redirects are never followed (R55). A client that can be reconfigured, like Symfony's
-     * HttpClient, is told so; any other client must already behave that way (README).
+     * HttpClient, is told so; any other client must already behave that way (README). The method is
+     * called only when it is public and takes one array (or untyped) argument; anything else, or a
+     * failure, leaves the client as it is, because a foreign client's quirks never break construction.
      */
-    private static function withoutRedirects(ClientInterface $client): ClientInterface
+    private static function withoutRedirects(ClientInterface $client, Log $log): ClientInterface
     {
-        if (! method_exists($client, 'withOptions')) {
+        if (! self::acceptsOptions($client)) {
             return $client;
         }
-        $configured = $client->withOptions(['max_redirects' => 0]);
+        try {
+            $configured = $client->withOptions(['max_redirects' => 0]); // @phpstan-ignore method.notFound
+        } catch (\Throwable $failure) {
+            $log->note('withOptions() failed ('.$failure::class.'); the HTTP client is used as it is');
+
+            return $client;
+        }
 
         return $configured instanceof ClientInterface ? $configured : $client;
+    }
+
+    private static function acceptsOptions(ClientInterface $client): bool
+    {
+        if (! method_exists($client, 'withOptions')) {
+            return false;
+        }
+        try {
+            $method = new \ReflectionMethod($client, 'withOptions');
+        } catch (\ReflectionException) {
+            return false;
+        }
+        if (! $method->isPublic() || $method->isStatic() || $method->getNumberOfRequiredParameters() !== 1) {
+            return false;
+        }
+        $type = $method->getParameters()[0]->getType();
+
+        return $type === null || ($type instanceof \ReflectionNamedType && in_array($type->getName(), ['array', 'mixed'], true));
     }
 
     private static function defaultHttpClient(float $timeout): ClientInterface
