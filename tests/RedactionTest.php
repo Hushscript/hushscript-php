@@ -168,6 +168,55 @@ final class RedactionTest extends TestCase
         }
     }
 
+    /** @return iterable<string, array{string}> */
+    public static function echoedForms(): iterable
+    {
+        $secret = self::TAIL;
+        yield 'bare secret segment' => ['the server said '.$secret.' is bad'];
+        yield 'secret in other case' => ['the server said '.strtoupper($secret).' is bad'];
+        yield 'secret in mixed case' => ['x'.ucfirst($secret).'y'];
+        yield 'percent-encoded full token' => [rawurlencode(Tokens::TEST)];
+        yield 'percent-encoded in lower case' => [strtolower(rawurlencode(Tokens::TEST))];
+        yield 'full token in upper case' => [strtoupper(Tokens::TEST)];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('echoedForms')]
+    public function testAnEchoedSecretIsRedactedInEveryFormTheApiMightReturnIt(string $echo): void
+    {
+        $credentials = new Credentials(Tokens::TEST);
+        $scrubbed = $credentials->scrub($echo);
+
+        self::assertStringNotContainsStringIgnoringCase(self::TAIL, $scrubbed);
+        self::assertStringNotContainsStringIgnoringCase('0123456789abcdef0123456789abcdef', $scrubbed);
+        self::assertStringNotContainsStringIgnoringCase(rawurlencode(Tokens::TEST), $scrubbed);
+        self::assertStringContainsString(Redact::MARKER, $scrubbed);
+    }
+
+    public function testTheSecretSegmentOfAnEarlierTokenIsRedactedToo(): void
+    {
+        $credentials = new Credentials(Tokens::TEST);
+        $credentials->replace(Tokens::ROTATED);
+
+        $scrubbed = $credentials->scrub('old '.strtoupper(self::TAIL).' new '.str_repeat('b', 64));
+
+        self::assertStringNotContainsStringIgnoringCase(self::TAIL, $scrubbed);
+        self::assertStringNotContainsString(str_repeat('b', 64), $scrubbed);
+    }
+
+    public function testAnApiErrorThatEchoesOnlyTheSecretSegmentNeverShowsIt(): void
+    {
+        $echo = ['error' => 'unauthorized', 'code' => 2000, 'details' => ['why' => 'bad '.strtoupper(self::TAIL)], 'message' => rawurlencode(Tokens::TEST)];
+        $rig = new Rig(new FakeHttp([FakeHttp::json(401, $echo)]));
+
+        try {
+            $rig->api->request('GET', '/v1/account');
+            self::fail('expected an AuthenticationError');
+        } catch (AuthenticationError $error) {
+            self::assertAllClean(self::dumps($error), 'error');
+            self::assertStringNotContainsStringIgnoringCase(self::TAIL, print_r($error, true));
+        }
+    }
+
     public function testATransportFailureWithTheTokenInItsMessageAndRequestIsSanitized(): void
     {
         $echoing = static function (\Psr\Http\Message\RequestInterface $request): never {
