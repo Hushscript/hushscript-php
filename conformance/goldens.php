@@ -71,9 +71,12 @@ final class Goldens
     /** The transcript fixture as the API body it stands for. */
     public static function transcript(string $conformanceDir, string $name): Transcript
     {
-        $decoded = json_decode((string) file_get_contents($conformanceDir.'/fixtures/transcripts/'.$name.'.json'), true, 512, JSON_THROW_ON_ERROR);
+        return self::fromJson((string) file_get_contents($conformanceDir.'/fixtures/transcripts/'.$name.'.json'));
+    }
 
-        return Transcript::fromApi(Body::of($decoded, 'transcript fixture'));
+    public static function fromJson(string $json): Transcript
+    {
+        return Transcript::fromApi(Body::of(json_decode($json, true, 512, JSON_THROW_ON_ERROR), 'transcript fixture'));
     }
 
     /** The golden's expected bytes. */

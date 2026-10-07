@@ -5,7 +5,7 @@ declare(strict_types=1);
 /*
  * Runs the conformance scenarios against the mock (the conformance repo's runner contract).
  *
- * Only the ops in OPS are mapped so far. A scenario that needs any other op is reported as SKIP and
+ * Only the ops in OPS are mapped so far (the friendly layer's reads; billing and agent come later). A scenario that needs any other op is reported as SKIP and
  * does not fail the run; CONFORMANCE_STRICT=1 turns every skip into a failure, which is what the
  * contract asks for once the friendly layer is complete.
  *
@@ -25,13 +25,16 @@ namespace Hushscript\Conformance;
 
 use GuzzleHttp\Client as Http;
 use Hushscript\Client;
+use Hushscript\Transcript;
 use Hushscript\Exception\HushscriptException;
+use Hushscript\Http\Body;
 use Hushscript\IdleClock;
 use Hushscript\Transcribe\Probe;
 use Hushscript\Transcribe\Sniff;
 use Hushscript\Transcribe\Source;
 
 require __DIR__.'/../vendor/autoload.php';
+require __DIR__.'/goldens.php';
 
 const BASE_URL = 'http://127.0.0.1:4010';
 const TEST_TOKEN = 'hsr1:eu:pat.'.'0123456789abcdef0123456789abcdef'.'.'.'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
@@ -261,16 +264,13 @@ function checkError(array $expected, \Throwable $error): array
 /** @return array<string, mixed> */
 function balance(Client $hs): array
 {
-    // The friendly layer arrives with the next task; until then the op reads the low-level Api.
-    $account = $hs->api()->request('GET', '/v1/account');
-    $seconds = is_int($account['balance_seconds'] ?? null) ? $account['balance_seconds'] : 0;
-    $expires = $account['credits_expire_at'] ?? null;
+    $balance = $hs->balance();
 
     return [
-        'seconds' => $seconds,
-        'minutes' => intdiv($seconds, 60),
-        'heldSeconds' => $account['held_seconds'] ?? 0,
-        'expiresAt' => is_int($expires) ? gmdate('c', $expires) : null,
+        'seconds' => $balance->seconds,
+        'minutes' => $balance->minutes,
+        'heldSeconds' => $balance->heldSeconds,
+        'expiresAt' => $balance->expiresAt?->format('Y-m-d\TH:i:sP'),
     ];
 }
 
@@ -334,24 +334,57 @@ function options(array $args): array
     return $out;
 }
 
+/** @return array<string, mixed> */
+function transcriptResult(Transcript $transcript): array
+{
+    return [
+        'id' => $transcript->id,
+        'title' => $transcript->title,
+        'language' => $transcript->language,
+        'durationSeconds' => $transcript->durationSeconds,
+        'utteranceCount' => count($transcript->utterances),
+        'text' => $transcript->toText(),
+        'raw' => $transcript->toJson(),
+    ];
+}
+
 /**
- * @param  array<string, mixed>  $body
+ * Every transcript fixture through every formatter, against the golden of the same name; the files come from the mock.
+ *
+ * @return array{checked: int, mismatches: list<string>}
+ */
+function format(Mock $mock): array
+{
+    $transcripts = [];
+    $mismatches = [];
+    $goldens = Goldens::all();
+    foreach ($goldens as $golden) {
+        $transcripts[$golden->transcript] ??= Goldens::fromJson($mock->bytes("/__files/fixtures/transcripts/{$golden->transcript}.json"));
+        if ($golden->render($transcripts[$golden->transcript]) !== $mock->bytes("/__files/fixtures/exports/{$golden->file}")) {
+            $mismatches[] = $golden->file;
+        }
+    }
+
+    return ['checked' => count($goldens), 'mismatches' => $mismatches];
+}
+
+/**
+ * @param  array<mixed>  $args
  * @return array<string, mixed>
  */
-function transcriptResult(array $body): array
+function listTranscripts(Client $hs, array $args): array
 {
-    $inner = is_array($body['body'] ?? null) ? $body['body'] : [];
-    $original = is_array($inner['original'] ?? null) ? $inner['original'] : [];
-    $utterances = is_array($original['utterances'] ?? null) ? $original['utterances'] : [];
+    $options = is_int($args['pageSize'] ?? null) ? ['page_size' => $args['pageSize']] : [];
+    $count = 0;
+    $first = null;
+    $last = null;
+    foreach ($hs->transcripts()->list($options) as $summary) {
+        $first ??= $summary->id;
+        $last = $summary->id;
+        $count++;
+    }
 
-    return [
-        'id' => $body['id'] ?? null,
-        'title' => $body['title'] ?? null,
-        'language' => $body['language_detected'] ?? null,
-        'durationSeconds' => $body['duration_seconds'] ?? null,
-        'utteranceCount' => count($utterances),
-        'raw' => $body,
-    ];
+    return ['count' => $count, 'firstId' => $first, 'lastId' => $last];
 }
 
 /**
@@ -389,13 +422,13 @@ function probe(array $args, Files $files): array
     return ['checked' => count($files->durations) - count($refuse), 'refused' => $refused, 'failures' => $failures];
 }
 
-const OPS = ['balance', 'transcribe', 'resume', 'probe'];
+const OPS = ['balance', 'transcribe', 'resume', 'probe', 'format', 'listTranscripts', 'getTranscript'];
 
 /**
  * @param  array<mixed>  $step
  * @return array<string, mixed>
  */
-function perform(Client $hs, array $step, Files $files, ?string $token): array
+function perform(Client $hs, Mock $mock, array $step, Files $files, ?string $token): array
 {
     $args = is_array($step['args'] ?? null) ? $step['args'] : [];
     $file = is_string($args['file'] ?? null) ? $files->path($args['file']) : '';
@@ -405,6 +438,9 @@ function perform(Client $hs, array $step, Files $files, ?string $token): array
         'transcribe' => transcriptResult($hs->transcribe($file, options($args))),
         'resume' => transcriptResult($hs->resume($token ?? '', $file, options($args))),
         'probe' => probe($args, $files),
+        'format' => format($mock),
+        'listTranscripts' => listTranscripts($hs, $args),
+        'getTranscript' => transcriptResult($hs->transcripts()->get(is_string($args['id'] ?? null) ? $args['id'] : '')),
         default => throw new \LogicException('unmapped op'),
     };
 }
@@ -445,7 +481,7 @@ function runScenario(Mock $mock, string $name, string $scratch): array
         $prior = $call['prior'] ?? null;
         if (is_array($prior)) {
             try {
-                perform($hs, $prior, $files, null);
+                perform($hs, $mock, $prior, $files, null);
                 $problems[] = 'the prior call returned; it should have failed';
             } catch (\Throwable $error) {
                 $wanted = is_array($prior['expectError'] ?? null) ? $prior['expectError'] : [];
@@ -454,7 +490,7 @@ function runScenario(Mock $mock, string $name, string $scratch): array
             }
         }
         $mock->post('/__mark');
-        $result = perform($hs, $call, $files, $token);
+        $result = perform($hs, $mock, $call, $files, $token);
         if (isset($expect['error'])) {
             $problems[] = 'expected an error, the call returned';
         } elseif (isset($expect['result']) && is_array($expect['result'])) {
