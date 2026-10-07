@@ -41,7 +41,6 @@ jobs:
             raw.githubusercontent.com:443
             repo.packagist.org:443
             packagist.org:443
-            api.github.com:443
             deb.debian.org:443
             pecl.php.net:443
       - name: Check out

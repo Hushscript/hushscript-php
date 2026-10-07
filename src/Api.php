@@ -33,7 +33,7 @@ final class Api
      *
      * @throws \Hushscript\Exception\HushscriptException
      */
-    public function request(string $method, string $path, array $query = [], ?array $body = null): array
+    public function request(string $method, string $path, array $query = [], #[\SensitiveParameter] ?array $body = null): array
     {
         $method = strtoupper($method);
         if (! in_array($method, self::METHODS, true)) {

@@ -22,10 +22,12 @@ final class Client
      *
      * @throws \Hushscript\Exception\ConfigurationError
      */
-    public function __construct(#[\SensitiveParameter] ?string $token = null, array $options = [])
+    public function __construct(#[\SensitiveParameter] ?string $token = null, #[\SensitiveParameter] array $options = [])
     {
         $this->config = Config::resolve($token, $options);
-        $inner = $this->config->httpClient ?? self::defaultHttpClient($this->config->timeout);
+        $inner = $this->config->httpClient === null
+            ? self::defaultHttpClient($this->config->timeout)
+            : self::withoutRedirects($this->config->httpClient);
         $transport = new RetryMiddleware(
             $inner,
             $this->config->credentials,
@@ -40,6 +42,20 @@ final class Client
     public function api(): Api
     {
         return $this->api;
+    }
+
+    /**
+     * Redirects are never followed (R55). A client that can be reconfigured, like Symfony's
+     * HttpClient, is told so; any other client must already behave that way (README).
+     */
+    private static function withoutRedirects(ClientInterface $client): ClientInterface
+    {
+        if (! method_exists($client, 'withOptions')) {
+            return $client;
+        }
+        $configured = $client->withOptions(['max_redirects' => 0]);
+
+        return $configured instanceof ClientInterface ? $configured : $client;
     }
 
     private static function defaultHttpClient(float $timeout): ClientInterface

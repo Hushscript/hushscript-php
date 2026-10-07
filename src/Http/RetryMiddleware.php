@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Hushscript\Http;
 
+use GuzzleHttp\ClientInterface as GuzzleClientInterface;
+use GuzzleHttp\Psr7\Utils;
 use Hushscript\Clock;
 use Hushscript\Credentials;
 use Hushscript\Exception\ErrorMapper;
@@ -30,6 +32,11 @@ final class RetryMiddleware implements ClientInterface
     private const NOT_SENT_ERRNOS = [5, 6, 7, 35, 51, 53, 54, 58, 59, 60, 64, 66, 77, 83];
 
     private const CURLE_OPERATION_TIMEDOUT = 28;
+
+    // The values of cURL's CURLOPT_FRESH_CONNECT and CURLOPT_FORBID_REUSE, spelled out so the package needs no ext-curl.
+    private const CURLOPT_FRESH_CONNECT = 74;
+
+    private const CURLOPT_FORBID_REUSE = 75;
 
     private const UNKNOWN_HINTS = [
         Routes::CLAIM => 'The claim may have succeeded. Retrying will fail with agent_claim_invalid. '
@@ -71,7 +78,7 @@ final class RetryMiddleware implements ClientInterface
     }
 
     #[\Override]
-    public function sendRequest(RequestInterface $request): ResponseInterface
+    public function sendRequest(#[\SensitiveParameter] RequestInterface $request): ResponseInterface
     {
         $uri = $request->getUri();
         $onBase = strtolower($uri->getScheme()) === $this->baseScheme
@@ -106,7 +113,7 @@ final class RetryMiddleware implements ClientInterface
             $response = null;
             $summary = '';
             try {
-                $response = $this->attemptOnce($request, $onBase);
+                $response = $this->attemptOnce($request, $onBase, $class);
                 $outcome = $this->outcomeOf($response, $class);
             } catch (\Throwable $failure) {
                 // Strings only: the exception holds the request, which carries the Authorization header.
@@ -138,7 +145,7 @@ final class RetryMiddleware implements ClientInterface
         }
     }
 
-    private function attemptOnce(RequestInterface $request, bool $onBase): ResponseInterface
+    private function attemptOnce(#[\SensitiveParameter] RequestInterface $request, bool $onBase, RetryClass $class): ResponseInterface
     {
         $outgoing = $request->withHeader('User-Agent', 'hushscript-php/'.Version::SDK.' php/'.PHP_VERSION);
         // Read per attempt, after any sleep: a rotation applies to retries already queued (spec 7.4).
@@ -149,18 +156,45 @@ final class RetryMiddleware implements ClientInterface
         if ($body->isSeekable()) {
             $body->rewind();
         }
-        $response = $this->inner->sendRequest($outgoing);
-        // Read inside the attempt: a body that fails midway is a failed attempt.
-        $response->getBody()->getContents();
+        $response = $this->transmit($outgoing, $class);
+        // Read inside the attempt: a body that fails midway is a failed attempt. The bytes go back
+        // into a seekable stream, so a body that cannot be rewound still reaches the caller whole.
         $stream = $response->getBody();
         if ($stream->isSeekable()) {
             $stream->rewind();
         }
+        $contents = $stream->getContents();
 
-        return $response;
+        return $response->withBody(Utils::streamFor($contents));
     }
 
-    private function outcomeOf(ResponseInterface $response, RetryClass $class): Outcome
+    /**
+     * A request that must not be replayed (R54) never rides a reused connection: libcurl replays a
+     * request on its own when a kept-alive connection dies after the body went out, and neither the
+     * retry table nor the not-sent test can see it. A Guzzle client is told to open a fresh,
+     * non-reusable connection; any other PSR-18 client has to guarantee this itself (README).
+     */
+    private function transmit(RequestInterface $outgoing, RetryClass $class): ResponseInterface
+    {
+        $replayable = match ($class) {
+            RetryClass::Safe, RetryClass::Part, RetryClass::Complete, RetryClass::Create => true,
+            RetryClass::Purchase, RetryClass::Never, RetryClass::Mutate => false,
+        };
+        if ($replayable || ! $this->inner instanceof GuzzleClientInterface) {
+            return $this->inner->sendRequest($outgoing);
+        }
+
+        // Guzzle's stream handler, used without ext-curl, ignores the curl option and opens a connection per request.
+        $options = [
+            'allow_redirects' => false,
+            'http_errors' => false,
+            'curl' => [self::CURLOPT_FRESH_CONNECT => true, self::CURLOPT_FORBID_REUSE => true],
+        ];
+
+        return $this->inner->send($outgoing, $options);
+    }
+
+    private function outcomeOf(#[\SensitiveParameter] ResponseInterface $response, RetryClass $class): Outcome
     {
         $status = $response->getStatusCode();
         $slug = null;
@@ -217,7 +251,7 @@ final class RetryMiddleware implements ClientInterface
         return $errno === self::CURLE_OPERATION_TIMEDOUT && ($context['pretransfer_time'] ?? null) === 0.0;
     }
 
-    private function hasIdempotencyKey(RequestInterface $request): bool
+    private function hasIdempotencyKey(#[\SensitiveParameter] RequestInterface $request): bool
     {
         $body = $request->getBody();
         $size = $body->getSize();

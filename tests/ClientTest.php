@@ -9,6 +9,7 @@ use Hushscript\Exception\NetworkError;
 use Hushscript\SystemClock;
 use Hushscript\Tests\Support\FakeClock;
 use Hushscript\Tests\Support\FakeHttp;
+use Hushscript\Tests\Support\OptionsHttp;
 use Hushscript\Tests\Support\Tokens;
 use Hushscript\Version;
 use PHPUnit\Framework\TestCase;
@@ -40,6 +41,18 @@ final class ClientTest extends TestCase
             self::assertStringContainsString('POST /v1/org/members', $error->getMessage());
         }
         self::assertCount(2, $clock->sleeps, 'a refused connection was not sent, so the mutation was retried twice');
+    }
+
+    public function testACustomClientWithOptionsIsToldNotToFollowRedirects(): void
+    {
+        $answers = new FakeHttp([FakeHttp::json(200, ['balance_seconds' => 60])]);
+        $http = OptionsHttp::answering($answers);
+        $client = new Client(Tokens::TEST, ['base_url' => 'http://127.0.0.1:4010', 'http_client' => $http, 'clock' => new FakeClock()]);
+
+        self::assertSame(['balance_seconds' => 60], $client->api()->request('GET', '/v1/account'));
+
+        self::assertSame([['max_redirects' => 0]], $http->optionCalls);
+        self::assertSame([true], $http->sentConfigured, 'the request went through the client that withOptions() returned');
     }
 
     public function testTheMaxRetriesOptionIsHonored(): void

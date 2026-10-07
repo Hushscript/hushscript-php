@@ -49,7 +49,7 @@ final class Config
      * @param  array<string, mixed>  $options  base_url, timeout, max_retries, log_level, clock, http_client
      * @param  array<string, string>|null  $env  defaults to the process environment
      */
-    public static function resolve(#[\SensitiveParameter] ?string $token = null, array $options = [], ?array $env = null): self
+    public static function resolve(#[\SensitiveParameter] ?string $token = null, #[\SensitiveParameter] array $options = [], #[\SensitiveParameter] ?array $env = null): self
     {
         foreach (array_keys($options) as $name) {
             if (! in_array($name, self::OPTIONS, true)) {
@@ -103,7 +103,7 @@ final class Config
     /**
      * @param  array<string, string>|null  $env
      */
-    private static function env(?array $env, string $name): string
+    private static function env(#[\SensitiveParameter] ?array $env, string $name): string
     {
         if ($env !== null) {
             return $env[$name] ?? '';
@@ -116,7 +116,7 @@ final class Config
     /**
      * @param  array<string, string>|null  $env
      */
-    private static function baseUrl(mixed $option, ?array $env): string
+    private static function baseUrl(#[\SensitiveParameter] mixed $option, #[\SensitiveParameter] ?array $env): string
     {
         $fromEnv = self::env($env, self::BASE_URL_ENV);
         $raw = $option ?? ($fromEnv === '' ? self::DEFAULT_BASE_URL : $fromEnv);

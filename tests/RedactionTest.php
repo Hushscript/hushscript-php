@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hushscript\Tests;
 
 use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Request;
 use Hushscript\Client;
 use Hushscript\Config;
@@ -12,6 +13,7 @@ use Hushscript\Credentials;
 use Hushscript\Exception\AuthenticationError;
 use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\NetworkError;
+use Hushscript\Exception\OutcomeUnknownError;
 use Hushscript\Redact;
 use Hushscript\Tests\Support\FakeHttp;
 use Hushscript\Tests\Support\Rig;
@@ -127,6 +129,28 @@ final class RedactionTest extends TestCase
             self::assertAllClean([$error->getMessage(), (string) $error->hint, $error->getTraceAsString(), (string) $error], 'error text');
             self::assertAllClean(self::dumps($error->details), 'details');
             self::assertAllClean(self::dumps($error->getTrace()), 'trace');
+        }
+    }
+
+    public function testAFailedClaimNeverShowsItsSecretInAnyRepresentationOfTheError(): void
+    {
+        $secret = 'cs_9f8e7d6c5b4a39281706f5e4d3c2b1a0';
+        $lost = new RequestException('cURL error 56: recv failure', new Request('POST', Rig::BASE.'/v1/agent/accounts/acc_1/claim'), null, null, ['errno' => 56, 'pretransfer_time' => 0.01]);
+        $rig = new Rig(new FakeHttp([$lost]));
+
+        try {
+            $rig->api->request('POST', '/v1/agent/accounts/acc_1/claim', body: ['claim_secret' => $secret]);
+            self::fail('expected an OutcomeUnknownError');
+        } catch (OutcomeUnknownError $error) {
+            $texts = [...self::dumps($error), ...self::dumps($error->getTrace()), $error->getTraceAsString(), (string) $error];
+            try {
+                $texts[] = serialize($error);
+            } catch (\Exception) {
+                // a trace that cannot be serialized leaks nothing either
+            }
+            foreach ($texts as $text) {
+                self::assertStringNotContainsString($secret, $text);
+            }
         }
     }
 
