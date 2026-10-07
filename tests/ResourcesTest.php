@@ -255,7 +255,7 @@ final class ResourcesTest extends TestCase
     {
         $this->expectException(PreflightError::class);
 
-        (new Jobs((new Rig(new FakeHttp([])))->exchange, (new PipelineHarness())->pipeline))->list(['actve' => true]);
+        (new Jobs((new Rig(new FakeHttp([])))->exchange, (new PipelineHarness())->pipeline))->list(['bogus' => true]);
     }
 
     public function testJobsGetReturnsTheFullShapeAndPassesAnUnknownStateThrough(): void
