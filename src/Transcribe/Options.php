@@ -269,6 +269,21 @@ final class Options
         return \Closure::fromCallable($value);
     }
 
+    /**
+     * The options without the caller's callbacks, whose captured variables could hold anything (a resume token among them).
+     *
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        $fields = get_object_vars($this);
+        foreach (['onProgress', 'onResumeToken'] as $callback) {
+            $fields[$callback] = $fields[$callback] === null ? null : '…[callback]';
+        }
+
+        return $fields;
+    }
+
     private static function invalid(string $message): PreflightError
     {
         return new PreflightError($message, 'invalid_option');
