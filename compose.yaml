@@ -1,0 +1,137 @@
+name: hushscript-php
+
+x-hardening: &hardening
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  mem_limit: 4g
+  pids_limit: 512
+  labels:
+    sdk.test: "1"
+
+x-dev-build: &dev-build
+  context: .
+  dockerfile: docker/dev.Dockerfile
+  target: dev
+  args:
+    PHP_VERSION: ${PHP_VERSION:?set by the justfile}
+
+x-dev: &dev
+  <<: *hardening
+  build: *dev-build
+  image: hushscript-php-dev:php${PHP_VERSION:?set by the justfile}
+  working_dir: /work
+
+# Every path a tool writes to, because the root filesystem is read-only. The tool caches are pointed
+# at /tmp in phpunit.xml, phpstan.neon, psalm.xml, pint.json and infection.json5.
+x-scratch: &scratch
+  - /tmp
+
+x-sandboxed: &sandboxed
+  <<: *dev
+  network_mode: "service:mock"
+  depends_on:
+    mock:
+      condition: service_healthy
+  tmpfs: *scratch
+
+services:
+  # The mock API every container below shares a network namespace with. Its network is internal,
+  # so the SDK reaches it at http://127.0.0.1:4010 and nothing else.
+  mock:
+    <<: *hardening
+    build:
+      context: ${CONFORMANCE_CONTEXT:?set by the justfile}
+      dockerfile: Dockerfile
+    image: hushscript-sdk-conformance-mock:pinned
+    mem_limit: 512m
+    pids_limit: 128
+    tmpfs:
+      - /tmp
+    networks:
+      - sdk
+
+  test:
+    <<: *sandboxed
+    # The hint tests read fixtures/hint-rendering.json; the justfile points CONFORMANCE_DIR at a checkout.
+    volumes:
+      - ${CONFORMANCE_DIR:-.}:/conformance:ro
+    environment:
+      CONFORMANCE_DIR: /conformance
+    command:
+      - sh
+      - -c
+      - >-
+        timeout 1800 phpunit --coverage-clover /tmp/clover.xml
+        && php scripts/check-coverage.php /tmp/clover.xml 90
+
+  # Infection on the HTTP core (nightly).
+  mutation:
+    <<: *sandboxed
+    volumes:
+      - ${CONFORMANCE_DIR:-.}:/conformance:ro
+    environment:
+      CONFORMANCE_DIR: /conformance
+    command: ["timeout", "3000", "infection", "--threads=4", "--min-msi=80", "--no-progress"]
+
+  lint:
+    <<: *sandboxed
+    command:
+      - sh
+      - -c
+      - >-
+        timeout 300 pint --test
+        && timeout 900 phpstan analyse --memory-limit=1G --no-progress
+        && timeout 900 psalm --taint-analysis --no-progress
+        && timeout 300 composer validate --strict
+        && timeout 300 composer-dependency-analyser
+
+  conformance:
+    <<: *sandboxed
+    environment:
+      CONFORMANCE_STRICT: ${CONFORMANCE_STRICT:-0}
+    command: ["timeout", "1800", "php", "conformance/run.php"]
+
+  examples:
+    <<: *sandboxed
+    command:
+      - sh
+      - -c
+      - >-
+        found=0;
+        for f in examples/*.php; do
+        [ -e "$$f" ] || continue; found=1;
+        timeout 600 php "$$f" || exit 1;
+        done;
+        [ "$$found" = 1 ] || echo "no examples yet"
+
+  # Outbound network: asks the advisory database about the locked set.
+  audit:
+    <<: *dev
+    tmpfs: *scratch
+    command: ["timeout", "300", "composer", "audit", "--locked", "--no-plugins"]
+
+  # Outbound network: fetches the spec and hints.json, writes openapi.json and src/Generated.
+  regen:
+    <<: *dev
+    user: "${HOST_UID:-10001}:${HOST_GID:-10001}"
+    tmpfs: *scratch
+    volumes:
+      - ./openapi.json:/work/openapi.json
+      - ./src/Generated:/work/src/Generated
+    command: ["timeout", "600", "php", "scripts/generate.php"]
+
+  # Outbound network: the one test that talks to production. Nightly only.
+  smoke:
+    <<: *dev
+    tmpfs: *scratch
+    environment:
+      HUSHSCRIPT_BASE_URL: https://api.hushscript.com
+      HUSHSCRIPT_TOKEN: ${SMOKE_TOKEN:-}
+    command: ["timeout", "300", "php", "smoke/smoke.php"]
+
+networks:
+  sdk:
+    internal: true

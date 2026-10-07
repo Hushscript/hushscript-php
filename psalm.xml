@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<!-- Taint analysis only (spec 13.2): run as `psalm --taint-analysis`. Types are PHPStan's job. -->
+<psalm
+    errorLevel="8"
+    cacheDirectory="/tmp/psalm"
+    findUnusedCode="false"
+    findUnusedBaselineEntry="false"
+    resolveFromConfigFile="true"
+>
+    <projectFiles>
+        <directory name="src"/>
+        <ignoreFiles>
+            <directory name="src/Generated"/>
+        </ignoreFiles>
+    </projectFiles>
+</psalm>

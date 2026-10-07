@@ -1,0 +1,17 @@
+{
+    "$schema": "vendor/infection/infection/resources/schema.json",
+    // Nightly, not on PRs (spec 13.2): the HTTP core and the transcribe pipeline once it exists.
+    "source": {
+        "directories": ["src/Http"]
+    },
+    "tmpDir": "/tmp/infection",
+    "logs": {
+        "text": "/tmp/infection.log"
+    },
+    "mutators": {
+        "@default": true
+    },
+    "minMsi": 80,
+    "testFramework": "phpunit",
+    "initialTestsPhpOptions": "-d pcov.enabled=1"
+}
