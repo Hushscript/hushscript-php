@@ -8,6 +8,7 @@ use Hushscript\Clock;
 use Hushscript\Credentials;
 use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\NotFoundError;
+use Hushscript\Exception\PreflightError;
 use Hushscript\Http\Body;
 use Hushscript\Http\Exchange;
 use Hushscript\Http\WaitTicker;
@@ -42,12 +43,22 @@ final class Pipeline
     }
 
     /**
+     * @param  mixed  $file  a path, or a stream resource the caller owns
      * @param  array<string, mixed>  $rawOptions
      */
-    public function transcribe(string $path, #[\SensitiveParameter] array $rawOptions): Transcript
+    public function transcribe(mixed $file, #[\SensitiveParameter] array $rawOptions): Transcript
     {
         $options = Options::forTranscribe($rawOptions);
-        $source = Source::open($path);
+        if (is_string($file)) {
+            $source = Source::open($file);
+        } elseif (Source::isStream($file)) {
+            $source = Source::stream($file, $options->size);
+            if ($source->sequential && $options->durationSeconds === null) {
+                throw new PreflightError(Source::NEEDS_SIZE, 'invalid_option');
+            }
+        } else {
+            throw self::notAFile();
+        }
         [$size, $duration] = Preflight::media($source, $options);
         Preflight::account($this->api->request('GET', '/v1/account'), $duration);
         $key = $options->newKey();
@@ -64,18 +75,24 @@ final class Pipeline
     }
 
     /**
+     * @param  mixed  $file  a path, a stream resource the caller owns, or null
      * @param  array<string, mixed>  $rawOptions
      */
-    public function resume(#[\SensitiveParameter] string $token, ?string $path, #[\SensitiveParameter] array $rawOptions): Transcript
+    public function resume(#[\SensitiveParameter] string $token, mixed $file, #[\SensitiveParameter] array $rawOptions): Transcript
     {
         $options = Options::forResume($rawOptions);
+        if ($file !== null && ! is_string($file) && ! Source::isStream($file)) {
+            throw self::notAFile();
+        }
         $state = Resume::decode($token);
         $held = new Secret($token);
 
-        return $this->annotated($state->idempotencyKey, $held, $options, function (Tracker $tracker) use ($options, $state, $path, $held): Transcript {
+        return $this->annotated($state->idempotencyKey, $held, $options, function (Tracker $tracker) use ($options, $state, $file, $held): Transcript {
             // A path is only sized now (a different size is refused before any request) and opened later,
-            // once the job is known to be uploading.
-            $early = $path === null ? null : Source::sizeOf($path);
+            // once the job is known to be uploading. A stream is measured now when it can seek; one that
+            // cannot has the size of the token, and is read from its current position once the upload needs it.
+            $stream = Source::isStream($file) ? Source::stream($file, null, $state->size) : null;
+            $early = $stream !== null ? $stream->size : (is_string($file) ? Source::sizeOf($file) : null);
             if ($early !== null) {
                 $state->checkSameFile($early);
             }
@@ -87,10 +104,10 @@ final class Pipeline
             if ($job['state'] !== self::UPLOADING) {
                 return $this->finish($state->jobId, $options, $held, $job);
             }
-            if ($path === null) {
+            if ($file === null) {
                 throw Resume::fileRequired();
             }
-            $source = Source::open($path);
+            $source = $stream ?? Source::open($file);
             $state->checkSameFile($source->size);
             $options->progress(self::uploading(0, 0, $state->size));
             $created = $this->create([
@@ -195,7 +212,7 @@ final class Pipeline
             $created->jobId,
             $created->plan,
             $source,
-            $options->concurrency,
+            $source->sequential ? 1 : $options->concurrency,
             $this->maxRetries,
             $heartbeat,
             $this->jitter,
@@ -208,6 +225,9 @@ final class Pipeline
                 $options->progress(self::uploading(intdiv(min($sent, $total) * 100, max(1, $total)), $sent, $total));
             });
             $heartbeat->raiseIfFailed();
+            if (! $source->atEnd()) {
+                throw Source::sizeMismatch();
+            }
             // One more ping right before complete, so a long last part cannot leave the job idle.
             $heartbeat->beat();
             $heartbeat->raiseIfFailed();
@@ -226,6 +246,11 @@ final class Pipeline
         $job = Wait::until($this->api, $this->clock, $jobId, $options->waitTimeout, $options->progressSink(), $token, $first);
 
         return Wait::transcript($this->api, Wait::transcriptId($job));
+    }
+
+    private static function notAFile(): PreflightError
+    {
+        return new PreflightError('file must be a path or an open stream resource.', 'invalid_option');
     }
 
     /** @return array<string, mixed> */

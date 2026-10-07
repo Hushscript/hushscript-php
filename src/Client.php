@@ -78,28 +78,32 @@ final class Client
      * Uploads a file, waits for the transcript and returns it (spec 8). Part uploads run concurrently
      * on the default HTTP client; with a client of your own they go one at a time.
      *
-     * @param  string  $path  a path to an MP3, M4A/MP4/MOV, WAV, FLAC or Ogg file
+     * @param  string|resource  $file  a path to an MP3, M4A/MP4/MOV, WAV, FLAC or Ogg file, or an open stream of one
+     *                                 (a `php://memory` or `php://temp` stream holds bytes). A stream that can seek is
+     *                                 measured and probed; one that cannot needs `size` and `duration_seconds`. The SDK
+     *                                 reads it from the start and never closes it.
      * @param  array<string, mixed>  $options  title, language, speakers, translate_to, keyterms, prompt, medical,
-     *                                         multichannel, auto_insights, matter_code, duration_seconds,
+     *                                         multichannel, auto_insights, matter_code, duration_seconds, size,
      *                                         idempotency_key, concurrency, wait_timeout, on_progress, on_resume_token
      *
      * @throws \Hushscript\Exception\HushscriptException
      */
-    public function transcribe(string $path, array $options = []): Transcript
+    public function transcribe(mixed $file, array $options = []): Transcript
     {
-        return $this->pipeline->transcribe($path, $options);
+        return $this->pipeline->transcribe($file, $options);
     }
 
     /**
      * Picks a transcription up from the resume token of an earlier call (spec 7.3). The file is needed
      * only while the job is still uploading. The options may also come second: `resume($token, $options)`.
+     * A stream that cannot seek is read from where it stands, as the job's whole file (its size is the token's).
      *
-     * @param  array<string, mixed>|string|null  $file  a path, or the options when no file is given
+     * @param  array<string, mixed>|string|resource|null  $file  a path, a stream, or the options when no file is given
      * @param  array<string, mixed>  $options  concurrency, wait_timeout, on_progress
      *
      * @throws \Hushscript\Exception\HushscriptException
      */
-    public function resume(#[\SensitiveParameter] string $token, array|string|null $file = null, array $options = []): Transcript
+    public function resume(#[\SensitiveParameter] string $token, mixed $file = null, array $options = []): Transcript
     {
         if (is_array($file)) {
             return $this->pipeline->resume($token, null, $file);

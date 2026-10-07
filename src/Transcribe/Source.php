@@ -9,15 +9,74 @@ use Hushscript\Exception\PreflightError;
 use Hushscript\Exception\UploadError;
 
 /**
- * A file the pipeline reads in byte ranges. Every read opens the file, seeks and loops over fread:
- * a short read is not the end of the file, and nothing keeps more than the range asked for.
+ * A file or a stream the pipeline reads in byte ranges. A path is opened for every read and a seekable
+ * stream is sought, both looping over fread: a short read is not the end of the input, and nothing keeps
+ * more than the range asked for. A stream that cannot seek is read once, in order, with at most one part
+ * (and the sniffed head) held. The SDK never closes a stream it was given.
  */
 final class Source
 {
+    public const NEEDS_SIZE = 'A stream that cannot seek needs `size` (its length in bytes) and `duration_seconds`.';
+
+    private int $position = 0;
+
+    private string $head = '';
+
+    private bool $headTaken = false;
+
+    /**
+     * @param  resource|null  $stream
+     */
     private function __construct(
-        public readonly string $path,
+        public readonly ?string $path,
+        private $stream,
         public readonly int $size,
+        public readonly bool $sequential,
     ) {
+    }
+
+    /**
+     * @phpstan-assert-if-true resource $file
+     */
+    public static function isStream(mixed $file): bool
+    {
+        return is_resource($file) && get_resource_type($file) === 'stream';
+    }
+
+    /**
+     * A stream the caller owns. A seekable one is measured (a `$size` given stands in for the measure
+     * and is checked when the bytes are read); one that cannot seek needs `$size`, or the `$defaultSize`
+     * a resume knows from its token.
+     *
+     * @param  resource  $stream
+     *
+     * @throws PreflightError invalid_option when a stream that cannot seek has no size; file_unreadable when a seekable one cannot be measured
+     */
+    public static function stream($stream, ?int $size, ?int $defaultSize = null): self
+    {
+        if ((stream_get_meta_data($stream)['seekable']) === true) {
+            return new self(null, $stream, $size ?? self::measure($stream), false);
+        }
+        $size ??= $defaultSize;
+        if ($size === null) {
+            throw new PreflightError(self::NEEDS_SIZE, 'invalid_option');
+        }
+
+        return new self(null, $stream, $size, true);
+    }
+
+    /**
+     * @param  resource  $stream
+     */
+    private static function measure($stream): int
+    {
+        [$moved] = self::capture(static fn (): mixed => fseek($stream, 0, SEEK_END));
+        $end = $moved === 0 ? ftell($stream) : false;
+        if ($end === false) {
+            throw new PreflightError('The stream cannot be read: it cannot be measured.', 'file_unreadable', previous: new \RuntimeException('it cannot be measured'));
+        }
+
+        return $end;
     }
 
     /**
@@ -75,21 +134,101 @@ final class Source
             throw self::unreadable($path, 'it is not a regular file');
         }
 
-        return new self($path, $stat['size']);
+        return new self($path, null, $stat['size'], false);
     }
 
-    /** The first bytes, for the format sniffer; fewer when the file is shorter. */
+    /** The first bytes, for the format sniffer; fewer when the input is shorter. */
     public function head(): string
     {
+        if ($this->sequential) {
+            if (! $this->headTaken) {
+                $this->head = $this->fill($this->input(), min(Sniff::HEAD_BYTES, $this->size), 'file_unreadable');
+                $this->headTaken = true;
+            }
+
+            return $this->head;
+        }
+
         return $this->read(0, min(Sniff::HEAD_BYTES, $this->size), 'file_unreadable');
     }
 
     /**
-     * @throws UploadError source_read_failed when the file cannot be read or ends before the range does
+     * @throws UploadError source_read_failed when the file cannot be read or ends before the range does; stream_size_mismatch when a stream ends before the range does; stream_not_seekable when a stream that cannot seek is asked for anything but the next range
      */
     public function readRange(int $offset, int $length): string
     {
+        if ($this->sequential) {
+            return $this->readNext($offset, $length);
+        }
+
         return $this->read($offset, $length, 'source_read_failed');
+    }
+
+    /**
+     * Whether nothing is left past `size`: a stream that holds more than it declared is not (spec 7.3).
+     * A path is always at its end; it was sized by `stat`.
+     */
+    public function atEnd(): bool
+    {
+        if ($this->stream === null) {
+            return true;
+        }
+        if (! $this->sequential && fseek($this->stream, $this->size) !== 0) {
+            throw $this->readFailure('source_read_failed', 'it cannot be positioned');
+        }
+        [$rest] = self::capture(fn (): mixed => fread($this->stream, 1));
+
+        return $rest === '' || $rest === false;
+    }
+
+    /**
+     * A file the duration probe may read and close: a fresh handle on a path, a window onto a seekable
+     * stream whose close leaves the stream open; null for a stream that cannot seek or a path that
+     * cannot be opened.
+     *
+     * @return resource|null
+     */
+    public function probeHandle()
+    {
+        if ($this->sequential) {
+            return null;
+        }
+        if ($this->stream !== null) {
+            return StreamView::of($this->stream, $this->size);
+        }
+        [$handle] = self::capture(fn (): mixed => fopen((string) $this->path, 'rb'));
+
+        return is_resource($handle) ? $handle : null;
+    }
+
+    /**
+     * @return resource
+     */
+    private function input()
+    {
+        return $this->stream ?? throw new \LogicException('A path has no stream.');
+    }
+
+    private function readNext(int $offset, int $length): string
+    {
+        if ($offset !== $this->position) {
+            throw new UploadError('A stream that cannot seek can only be uploaded in order, one part at a time.', 'stream_not_seekable');
+        }
+        $head = $this->head();
+        if ($offset >= strlen($head)) {
+            $data = $this->fill($this->input(), $length, 'source_read_failed');
+        } else {
+            $data = substr($head, $offset, $length);
+            if (strlen($data) < $length) {
+                $data .= $this->fill($this->input(), $length - strlen($data), 'source_read_failed');
+            }
+        }
+        $this->position += strlen($data);
+        if (strlen($data) < $length) {
+            throw self::sizeMismatch();
+        }
+
+        return $data;
     }
 
     private function read(int $offset, int $length, string $code): string
@@ -97,7 +236,18 @@ final class Source
         if ($length <= 0) {
             return '';
         }
-        [$handle, $failure] = self::capture(fn (): mixed => fopen($this->path, 'rb'));
+        if ($this->stream !== null) {
+            if (fseek($this->stream, $offset) !== 0) {
+                throw $this->readFailure($code, 'it cannot be positioned');
+            }
+            $data = $this->fill($this->stream, $length, $code);
+            if (strlen($data) < $length && $code === 'source_read_failed') {
+                throw self::sizeMismatch();
+            }
+
+            return $data;
+        }
+        [$handle, $failure] = self::capture(fn (): mixed => fopen((string) $this->path, 'rb'));
         if (! is_resource($handle)) {
             throw $this->readFailure($code, $failure ?? 'it cannot be opened');
         }
@@ -105,20 +255,7 @@ final class Source
             if (fseek($handle, $offset) !== 0) {
                 throw $this->readFailure($code, 'it cannot be positioned');
             }
-            $data = '';
-            while (strlen($data) < $length) {
-                [$chunk] = self::capture(static fn (): mixed => fread($handle, max(1, $length - strlen($data))));
-                if (! is_string($chunk)) {
-                    throw $this->readFailure($code, 'a read failed');
-                }
-                if ($chunk === '') {
-                    if (feof($handle)) {
-                        break;
-                    }
-                    throw $this->readFailure($code, 'a read returned nothing');
-                }
-                $data = $data === '' ? $chunk : $data.$chunk;
-            }
+            $data = $this->fill($handle, $length, $code);
         } finally {
             fclose($handle);
         }
@@ -129,13 +266,46 @@ final class Source
         return $data;
     }
 
+    /**
+     * Up to `$length` bytes, reading on until they are all there or the input ends: a read that
+     * returns less than asked is not the end.
+     *
+     * @param  resource  $handle
+     */
+    private function fill($handle, int $length, string $code): string
+    {
+        $data = '';
+        while (strlen($data) < $length) {
+            [$chunk] = self::capture(static fn (): mixed => fread($handle, max(1, $length - strlen($data))));
+            if (! is_string($chunk)) {
+                throw $this->readFailure($code, 'a read failed');
+            }
+            if ($chunk === '') {
+                if (feof($handle)) {
+                    break;
+                }
+                throw $this->readFailure($code, 'a read returned nothing');
+            }
+            $data .= $chunk;
+        }
+
+        return $data;
+    }
+
     private function readFailure(string $code, string $reason): HushscriptException
     {
         if ($code === 'file_unreadable') {
-            return self::unreadable($this->path, $reason);
+            return $this->path === null
+                ? new PreflightError('The stream cannot be read: '.$reason.'.', $code, previous: new \RuntimeException($reason))
+                : self::unreadable($this->path, $reason);
         }
 
-        return new UploadError('The file could not be read while it was uploading ('.$reason.').', $code, previous: new \RuntimeException($reason));
+        return new UploadError('The '.($this->path === null ? 'stream' : 'file').' could not be read while it was uploading ('.$reason.').', $code, previous: new \RuntimeException($reason));
+    }
+
+    public static function sizeMismatch(): UploadError
+    {
+        return new UploadError('The stream did not hold the number of bytes that was declared.', 'stream_size_mismatch');
     }
 
     /**
