@@ -3,4 +3,4 @@ useDefault = true
 
 [[allowlists]]
 description = "Tests and the conformance runner use the made-up mock token."
-paths = ['''tests/.*''', '''conformance/.*''']
+paths = ['''tests/.*''', '''conformance/.*''', '''scripts/run-examples\.php''']
