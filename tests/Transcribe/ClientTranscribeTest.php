@@ -89,6 +89,6 @@ final class ClientTranscribeTest extends TestCase
     {
         $this->expectException(ConfigurationError::class);
 
-        new Client(Tokens::TEST, ['part_transport' => new \stdClass()]); // @phpstan-ignore argument.type
+        new Client(Tokens::TEST, ['part_transport' => new \stdClass()]);
     }
 }

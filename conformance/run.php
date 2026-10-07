@@ -496,7 +496,8 @@ function main(): int
         $counts[$status]++;
         echo $status.' '.$name.($reason === '' ? '' : ": {$reason}")."\n";
     }
-    foreach (glob($scratch.'/media/*') ?: [] as $file) {
+    $leftover = glob($scratch.'/media/*');
+    foreach (is_array($leftover) ? $leftover : [] as $file) {
         unlink($file);
     }
     @rmdir($scratch.'/media');

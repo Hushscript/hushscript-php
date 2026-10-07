@@ -9,7 +9,7 @@ the transcribe pipeline (`transcribe`, `resume`, `jobs()->wait`). The rest of th
 
 ## Requirements
 
-- PHP 8.2 or newer
+- PHP 8.2 or newer, with `ext-json` and `ext-mbstring`
 - `guzzlehttp/guzzle` ^7 and `james-heinrich/getid3` (installed by Composer)
 - `ext-curl` for concurrent part uploads (without it, or with a client of your own, parts go one at a time)
 

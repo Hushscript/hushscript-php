@@ -108,7 +108,7 @@ final class PartTransportTest extends TestCase
         try {
             $promise->wait();
             self::fail('expected a failure');
-        } catch (PartFailure $failure) {
+        } catch (PartFailure $failure) { // @phpstan-ignore catch.neverThrown
             self::assertStringNotContainsString('SECRET', (string) $failure);
             self::assertStringNotContainsString('127.0.0.1', $failure->getMessage());
             self::assertNull($failure->getPrevious());

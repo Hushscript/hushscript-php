@@ -13,31 +13,31 @@ use PHPUnit\Framework\TestCase;
 
 final class HeartbeatTest extends TestCase
 {
+    private int $pings = 0;
+
     public function testItPingsOnlyOnceTheIntervalHasPassed(): void
     {
         $clock = new FakeClock();
-        $pings = 0;
-        $beat = new Heartbeat($clock, static function () use (&$pings): void {
-            $pings++;
+        $beat = new Heartbeat($clock, function (): void {
+            $this->pings++;
         });
 
         $clock->time = 119.9;
         $beat->tick();
-        self::assertSame(0, $pings);
+        self::assertSame(0, $this->pings);
         self::assertSame(120.0, $beat->deadline());
 
         $clock->time = 120.0;
         $beat->tick();
-        self::assertSame(1, $pings);
+        self::assertSame(1, $this->pings);
         self::assertSame(240.0, $beat->deadline(), 'the next ping is scheduled from the one just sent');
     }
 
     public function testBeatSendsNowAndStopEndsIt(): void
     {
         $clock = new FakeClock();
-        $pings = 0;
-        $beat = new Heartbeat($clock, static function () use (&$pings): void {
-            $pings++;
+        $beat = new Heartbeat($clock, function (): void {
+            $this->pings++;
         });
 
         $beat->beat();
@@ -46,16 +46,15 @@ final class HeartbeatTest extends TestCase
         $clock->time = 500.0;
         $beat->tick();
 
-        self::assertSame(1, $pings);
+        self::assertSame(1, $this->pings);
         self::assertSame(INF, $beat->deadline());
     }
 
     public function testACleanWrongStateEndsTheBeatQuietly(): void
     {
         $clock = new FakeClock();
-        $pings = 0;
-        $beat = new Heartbeat($clock, static function () use (&$pings): void {
-            $pings++;
+        $beat = new Heartbeat($clock, function (): void {
+            $this->pings++;
 
             throw new ConflictError('The job moved on.', 'wrong_state');
         });
@@ -64,14 +63,13 @@ final class HeartbeatTest extends TestCase
         $beat->beat();
         $beat->raiseIfFailed();
 
-        self::assertSame(1, $pings);
+        self::assertSame(1, $this->pings);
     }
 
     public function testAnotherConflictDoesNotEndTheBeat(): void
     {
-        $pings = 0;
-        $beat = new Heartbeat(new FakeClock(), static function () use (&$pings): void {
-            $pings++;
+        $beat = new Heartbeat(new FakeClock(), function (): void {
+            $this->pings++;
 
             throw new ConflictError('Busy.', 'something_else');
         });
@@ -79,7 +77,7 @@ final class HeartbeatTest extends TestCase
         $beat->beat();
         $beat->beat();
 
-        self::assertSame(2, $pings);
+        self::assertSame(2, $this->pings);
     }
 
     public function testARefusedTokenEndsTheBeatAndIsKeptForTheUpload(): void
@@ -103,11 +101,10 @@ final class HeartbeatTest extends TestCase
     public function testOtherFailuresAreIgnoredAndTheNextPingTriesAgain(): void
     {
         $clock = new FakeClock();
-        $pings = 0;
-        $beat = new Heartbeat($clock, static function () use (&$pings): void {
-            $pings++;
+        $beat = new Heartbeat($clock, function (): void {
+            $this->pings++;
 
-            throw $pings === 1 ? new ApiError('Down.', 'upstream', status: 503) : new \RuntimeException('boom');
+            throw $this->pings === 1 ? new ApiError('Down.', 'upstream', status: 503) : new \RuntimeException('boom');
         });
 
         $beat->beat();
@@ -115,7 +112,7 @@ final class HeartbeatTest extends TestCase
         $beat->tick();
         $beat->raiseIfFailed();
 
-        self::assertSame(2, $pings);
+        self::assertSame(2, $this->pings);
         self::assertSame(240.0, $beat->deadline());
     }
 }
