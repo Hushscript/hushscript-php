@@ -65,7 +65,9 @@ true duration), uploads it in parts, waits for the job and returns a `Transcript
 
 `$file` is a path or an open stream. A stream that can seek is measured and probed like a file; one
 that cannot (a pipe, `php://stdin`) is read once, in order, one part at a time, and needs the `size`
-(bytes) and `duration_seconds` options. The SDK reads a stream from its start and never closes it.
+(bytes) and `duration_seconds` options, and is read from where it stands, so it must start at the first
+byte of the file. A stream that can seek is read from its start whatever its position. The SDK never
+closes a stream.
 Bytes already in memory go in as a `php://memory` stream (a string is always a path):
 
 ```php

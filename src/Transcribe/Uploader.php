@@ -122,7 +122,7 @@ final class Uploader
     private function begin(int $n): PartRun
     {
         [$offset, $length] = $this->plan->range($this->source->size, $n);
-        $run = new PartRun($n, $this->source->readRange($offset, $length));
+        $run = new PartRun($n, $this->source->readRange($offset, $length, fn () => $this->heartbeat->tick()));
         $this->start($run);
 
         return $run;

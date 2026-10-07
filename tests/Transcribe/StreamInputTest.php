@@ -14,10 +14,13 @@ use Hushscript\Exception\UploadError;
 use Hushscript\Tests\Support\FakeClock;
 use Hushscript\Tests\Support\PipelineHarness;
 use Hushscript\Tests\Support\RecordingParts;
+use Hushscript\Tests\Support\RefusingWrapper;
+use Hushscript\Tests\Support\SlowRead;
 use Hushscript\Tests\Support\Tokens;
 use Hushscript\Transcribe\Probe;
 use Hushscript\Transcribe\Resume;
 use Hushscript\Transcribe\Source;
+use Hushscript\Transcribe\StreamView;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -161,6 +164,48 @@ final class StreamInputTest extends TestCase
         $first = substr($bytes, 0, $harness->partSize);
         self::assertSame($first, $parts->requests[0]['body']);
         self::assertSame($first, $parts->requests[1]['body'], 'the retry sends the part it held, not the next bytes of the stream');
+        self::assertSame($bytes, $parts->joined());
+    }
+
+    public function testAForwardOnlyPartThatIsSlowToArriveKeepsTheJobAlive(): void
+    {
+        $clock = new FakeClock();
+        $parts = new RecordingParts($clock);
+        $harness = new PipelineHarness(clock: $clock, transport: $parts);
+        $bytes = (string) file_get_contents($harness->path());
+        $stream = $this->pipe($harness->path());
+        $beats = '/v1/uploads/job_1/heartbeat';
+        /** @var list<array{int, int}> $seen */
+        $seen = [];
+        SlowRead::attach($stream, static function () use ($clock, $harness, $parts, $beats, &$seen): void {
+            $clock->time += 30.0;
+            $seen[] = [count($parts->requests), count($harness->api->to('POST', $beats))];
+        });
+
+        try {
+            $harness->pipeline->transcribe($stream, ['size' => strlen($bytes), 'duration_seconds' => 21]);
+        } finally {
+            SlowRead::$onChunk = null;
+        }
+
+        $pingedWhileTheFirstPartWasArriving = array_filter($seen, static fn (array $look): bool => $look[0] === 0 && $look[1] >= 1);
+        self::assertNotSame([], $pingedWhileTheFirstPartWasArriving, 'a ping went out before the first part was sent');
+        self::assertSame($bytes, $parts->joined());
+    }
+
+    public function testAForwardOnlyPartThatDirectStorageRefusesGoesThroughTheApiFromTheBytesItHeld(): void
+    {
+        $clock = new FakeClock();
+        $parts = new RecordingParts($clock, static fn (array $request): array => [str_contains($request['url'], 'r2.example') ? new Response(403) : PipelineHarness::stored(), 0.0]);
+        $harness = new PipelineHarness(clock: $clock, transport: $parts);
+        $bytes = (string) file_get_contents($harness->path());
+        $fresh = [['n' => 1, 'url' => PipelineHarness::url(1, '&fresh=1')]];
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => $harness->partSize, 'total_parts' => 3, 'part_urls' => $fresh, 'next_part_number' => null]));
+
+        $harness->pipeline->transcribe($this->pipe($harness->path()), ['size' => strlen($bytes), 'duration_seconds' => 21]);
+
+        self::assertCount(1, $harness->api->to('GET', '/v1/uploads/job_1/part-urls'), 'one fresh page, not one per part');
+        self::assertSame(['PUT r2:1', 'PUT r2:1', 'PUT api:1', 'PUT api:2', 'PUT api:3'], $parts->inner->lines());
         self::assertSame($bytes, $parts->joined());
     }
 
@@ -318,6 +363,109 @@ final class StreamInputTest extends TestCase
         }
         self::assertSame(substr($bytes, 5100), $source->readRange(5100, strlen($bytes) - 5100));
         self::assertTrue($source->atEnd());
+    }
+
+    /**
+     * A stream that cannot seek and has no bytes yet: a read of it returns nothing without the stream having ended.
+     *
+     * @return array{resource, resource}  the reader and the writer
+     */
+    private function idleSocket(): array
+    {
+        $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        self::assertNotFalse($pair);
+        [$reader, $writer] = $pair;
+        stream_set_blocking($reader, false);
+        array_push($this->open, $reader, $writer);
+
+        return [$reader, $writer];
+    }
+
+    public function testAStreamThatReturnsNothingWithoutEndingIsAReadFailureNotItsEnd(): void
+    {
+        [$reader, $writer] = $this->idleSocket();
+        fwrite($writer, 'abcde');
+        $source = Source::stream($reader, 5);
+        self::assertSame('abcde', $source->readRange(0, 5));
+
+        try {
+            $source->atEnd();
+            self::fail('expected an UploadError');
+        } catch (UploadError $error) {
+            self::assertSame('source_read_failed', $error->errorCode);
+        }
+    }
+
+    public function testAStreamThatHoldsMoreThanItDeclaredIsNotAtItsEnd(): void
+    {
+        [$reader, $writer] = $this->idleSocket();
+        fwrite($writer, 'abcdef');
+        $source = Source::stream($reader, 5);
+        self::assertSame('abcde', $source->readRange(0, 5));
+
+        self::assertFalse($source->atEnd());
+    }
+
+    public function testAForwardOnlyStreamThatCannotBeReadWhileResumingIsASourceReadFailedNotAPreflightError(): void
+    {
+        [$harness, , , $token] = self::resuming();
+        [$reader] = $this->idleSocket();
+
+        try {
+            $harness->pipeline->resume($token, $reader, []);
+            self::fail('expected an UploadError');
+        } catch (UploadError $error) {
+            self::assertSame('source_read_failed', $error->errorCode);
+            self::assertNotNull($error->resumeToken);
+        }
+    }
+
+    public function testAForwardOnlyStreamLongerThanTheTokenIsAStreamSizeMismatchOnResume(): void
+    {
+        [$harness, , $bytes] = self::harness(null);
+        $declared = strlen($bytes) - 1000;
+        $token = Resume::state(PipelineHarness::JOB, 'key-1', $declared, 21)->encode();
+        $harness->api->on('GET', '/v1/jobs/job_1', PipelineHarness::json(200, ['id' => 'job_1', 'state' => 'uploading']));
+        $harness->api->on('POST', '/v1/uploads', static fn (): Response => PipelineHarness::json(200, $harness->createBody((int) ceil($declared / $harness->partSize))));
+
+        try {
+            $harness->pipeline->resume($token, $this->pipe($harness->path()), []);
+            self::fail('expected an UploadError');
+        } catch (UploadError $error) {
+            self::assertSame('stream_size_mismatch', $error->errorCode);
+        }
+        self::assertSame([], $harness->api->to('POST', '/v1/uploads/job_1/complete'));
+    }
+
+    public function testASeekableStreamThatCannotBeWindowedIsNotProbedThroughAFileNamedStream(): void
+    {
+        [$harness, , $bytes] = self::harness();
+        $dir = sys_get_temp_dir().'/hs-probe-'.bin2hex(random_bytes(4));
+        mkdir($dir);
+        file_put_contents($dir.'/stream', $bytes);
+        $wrapper = 'hushscript-view';
+        $replaced = in_array($wrapper, stream_get_wrappers(), true);
+        if ($replaced) {
+            stream_wrapper_unregister($wrapper);
+        }
+        stream_wrapper_register($wrapper, RefusingWrapper::class);
+        $here = (string) getcwd();
+        chdir($dir);
+
+        try {
+            Probe::seconds(Source::stream($this->memory($bytes), null));
+            self::fail('expected an UnsupportedMediaError');
+        } catch (UnsupportedMediaError $error) {
+            self::assertSame('duration_unreadable', $error->errorCode);
+        } finally {
+            chdir($here);
+            stream_wrapper_unregister($wrapper);
+            if ($replaced) {
+                stream_wrapper_register($wrapper, StreamView::class);
+            }
+            unlink($dir.'/stream');
+            rmdir($dir);
+        }
     }
 
     /** @return array{PipelineHarness, RecordingParts, string, string} */

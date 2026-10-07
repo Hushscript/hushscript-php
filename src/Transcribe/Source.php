@@ -140,25 +140,37 @@ final class Source
     /** The first bytes, for the format sniffer; fewer when the input is shorter. */
     public function head(): string
     {
+        return $this->headWith('file_unreadable');
+    }
+
+    private function headWith(string $code): string
+    {
         if ($this->sequential) {
             if (! $this->headTaken) {
-                $this->head = $this->fill($this->input(), min(Sniff::HEAD_BYTES, $this->size), 'file_unreadable');
+                $this->head = $this->fill($this->input(), min(Sniff::HEAD_BYTES, $this->size), $code);
                 $this->headTaken = true;
             }
 
             return $this->head;
         }
 
-        return $this->read(0, min(Sniff::HEAD_BYTES, $this->size), 'file_unreadable');
+        return $this->read(0, min(Sniff::HEAD_BYTES, $this->size), $code);
     }
 
     /**
-     * @throws UploadError source_read_failed when the file cannot be read or ends before the range does; stream_size_mismatch when a stream ends before the range does; stream_not_seekable when a stream that cannot seek is asked for anything but the next range
+     * `$between` is called after every chunk of a stream that cannot seek, so a caller waiting on a slow
+     * producer can keep a job alive.
+     *
+     * @param  (\Closure(): void)|null  $between
+     *
+     * @throws UploadError source_read_failed when the file cannot be read or ends before the range does;
+     *                     stream_size_mismatch when a stream ends before the range does;
+     *                     stream_not_seekable when a stream that cannot seek is asked for anything but the next range
      */
-    public function readRange(int $offset, int $length): string
+    public function readRange(int $offset, int $length, ?\Closure $between = null): string
     {
         if ($this->sequential) {
-            return $this->readNext($offset, $length);
+            return $this->readNext($offset, $length, $between);
         }
 
         return $this->read($offset, $length, 'source_read_failed');
@@ -176,9 +188,8 @@ final class Source
         if (! $this->sequential && fseek($this->stream, $this->size) !== 0) {
             throw $this->readFailure('source_read_failed', 'it cannot be positioned');
         }
-        [$rest] = self::capture(fn (): mixed => fread($this->stream, 1));
 
-        return $rest === '' || $rest === false;
+        return $this->fill($this->stream, 1, 'source_read_failed') === '';
     }
 
     /**
@@ -209,18 +220,21 @@ final class Source
         return $this->stream ?? throw new \LogicException('A path has no stream.');
     }
 
-    private function readNext(int $offset, int $length): string
+    /**
+     * @param  (\Closure(): void)|null  $between
+     */
+    private function readNext(int $offset, int $length, ?\Closure $between): string
     {
         if ($offset !== $this->position) {
             throw new UploadError('A stream that cannot seek can only be uploaded in order, one part at a time.', 'stream_not_seekable');
         }
-        $head = $this->head();
+        $head = $this->headWith('source_read_failed');
         if ($offset >= strlen($head)) {
-            $data = $this->fill($this->input(), $length, 'source_read_failed');
+            $data = $this->fill($this->input(), $length, 'source_read_failed', $between);
         } else {
             $data = substr($head, $offset, $length);
             if (strlen($data) < $length) {
-                $data .= $this->fill($this->input(), $length - strlen($data), 'source_read_failed');
+                $data .= $this->fill($this->input(), $length - strlen($data), 'source_read_failed', $between);
             }
         }
         $this->position += strlen($data);
@@ -271,8 +285,9 @@ final class Source
      * returns less than asked is not the end.
      *
      * @param  resource  $handle
+     * @param  (\Closure(): void)|null  $between  called after each chunk that leaves the range unfinished
      */
-    private function fill($handle, int $length, string $code): string
+    private function fill($handle, int $length, string $code, ?\Closure $between = null): string
     {
         $data = '';
         while (strlen($data) < $length) {
@@ -287,6 +302,9 @@ final class Source
                 throw $this->readFailure($code, 'a read returned nothing');
             }
             $data .= $chunk;
+            if ($between !== null && strlen($data) < $length) {
+                $between();
+            }
         }
 
         return $data;

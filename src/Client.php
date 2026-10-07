@@ -81,7 +81,8 @@ final class Client
      * @param  string|resource  $file  a path to an MP3, M4A/MP4/MOV, WAV, FLAC or Ogg file, or an open stream of one
      *                                 (a `php://memory` or `php://temp` stream holds bytes). A stream that can seek is
      *                                 measured and probed; one that cannot needs `size` and `duration_seconds`. The SDK
-     *                                 reads it from the start and never closes it.
+     *                                 reads one that can seek from its start, and one that cannot from where it stands
+     *                                 (that must be the first byte of the file). It never closes a stream.
      * @param  array<string, mixed>  $options  title, language, speakers, translate_to, keyterms, prompt, medical,
      *                                         multichannel, auto_insights, matter_code, duration_seconds, size,
      *                                         idempotency_key, concurrency, wait_timeout, on_progress, on_resume_token

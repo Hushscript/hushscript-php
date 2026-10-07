@@ -81,6 +81,9 @@ final class Probe
         // getID3 predates current PHP and may raise notices or deprecations on odd files; none of them is the caller's.
         // A stream is read through a window that closing leaves open: getID3 closes what it is given.
         $window = $source->path === null ? $source->probeHandle() : null;
+        if ($source->path === null && $window === null) {
+            return null;
+        }
         set_error_handler(static fn (): bool => true);
         try {
             $info = $source->path === null ? $reader->analyze('stream', $source->size, '', $window) : $reader->analyze($source->path);
