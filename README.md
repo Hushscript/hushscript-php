@@ -12,6 +12,10 @@ export HUSHSCRIPT_TOKEN=hsr1:...   # Account → MCP in the Hushscript app
 ```
 
 ```php
+<?php
+
+require __DIR__ . '/vendor/autoload.php';
+
 use Hushscript\Client;
 
 $hs = new Client(); // reads HUSHSCRIPT_TOKEN
@@ -23,6 +27,20 @@ file_put_contents('meeting.srt', $transcript->toSrt());
 
 Options and results use snake_case array keys for input (`'translate_to'`) and camelCase properties
 and methods on results (`$balance->heldSeconds`).
+
+## Inputs
+
+`$file` is a path or an open stream. A stream that can seek is measured and probed like a file; one
+that cannot (a pipe, `php://stdin`) is read once, in order, one part at a time, and needs the `size`
+(bytes) and `duration_seconds` options, and is read from where it stands, so it must start at the first
+byte of the file. A stream that can seek is read from its start whatever its position. The SDK never
+closes a stream.
+Bytes already in memory go in as a `php://memory` stream (a string is always a path):
+
+```php
+$memory = fopen('php://memory', 'r+b'); fwrite($memory, $bytes);
+$transcript = $hs->transcribe($memory);
+```
 
 ## Check my balance
 
@@ -62,18 +80,6 @@ true duration), uploads it in parts, waits for the job and returns a `Transcript
 `title`, `language`, `speakers`, `translate_to`, `keyterms`, `prompt`, `medical`, `multichannel`,
 `auto_insights`, `matter_code`, `duration_seconds`, `size`, `idempotency_key`, `concurrency`,
 `wait_timeout`, `on_progress`, `on_resume_token`.
-
-`$file` is a path or an open stream. A stream that can seek is measured and probed like a file; one
-that cannot (a pipe, `php://stdin`) is read once, in order, one part at a time, and needs the `size`
-(bytes) and `duration_seconds` options, and is read from where it stands, so it must start at the first
-byte of the file. A stream that can seek is read from its start whatever its position. The SDK never
-closes a stream.
-Bytes already in memory go in as a `php://memory` stream (a string is always a path):
-
-```php
-$memory = fopen('php://memory', 'r+b'); fwrite($memory, $bytes);
-$transcript = $hs->transcribe($memory);
-```
 
 When the call fails after the upload was created, the error carries `idempotencyKey` and
 `resumeToken`. A wait that runs out raises `WaitTimeoutError` with the token:
@@ -431,11 +437,25 @@ own export.
 The SDK is for servers and scripts. The API does not accept browser origins, and a token shipped in
 client-side code is a leaked token.
 
+## Pricing
+
+Personal accounts buy prepaid minute packs. The price of a pack depends on your country, and your
+minutes stay valid for a year after your last transcription or purchase. A transcription uses the
+minutes of the recording; medical mode and each translation target use more. Current prices are on
+[hushscript.com/pricing](https://hushscript.com/pricing).
+
 ## Requirements
 
 - PHP 8.2 or newer, with `ext-json` and `ext-mbstring`
 - `guzzlehttp/guzzle` ^7 and `james-heinrich/getid3` (installed by Composer)
 - `ext-curl` for concurrent part uploads (without it, or with a client of your own, parts go one at a time)
+
+## Releases
+
+Releases come from release-please. Every push to `main` runs the `release` workflow, which opens or
+updates a release PR that bumps the version in `src/Version.php` and writes `CHANGELOG.md`. Merging
+that PR creates the `v<version>` tag and the GitHub release. No workflow in this repository publishes
+to Packagist.
 
 ## Development
 
