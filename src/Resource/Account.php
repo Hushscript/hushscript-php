@@ -18,11 +18,11 @@ final class Account
 
     public function balance(): Balance
     {
-        return $this->exchange->fetch('GET', '/v1/account', [], null, static fn (Body $body): Balance => Balance::fromApi($body));
+        return $this->exchange->fetch('GET', '/v1/account', [], null, static fn (#[\SensitiveParameter] Body $body): Balance => Balance::fromApi($body));
     }
 
     public function account(): AccountInfo
     {
-        return $this->exchange->fetch('GET', '/v1/account', [], null, static fn (Body $body): AccountInfo => AccountInfo::fromApi($body));
+        return $this->exchange->fetch('GET', '/v1/account', [], null, static fn (#[\SensitiveParameter] Body $body): AccountInfo => AccountInfo::fromApi($body));
     }
 }

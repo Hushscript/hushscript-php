@@ -579,6 +579,8 @@ final class PipelineTest extends TestCase
         yield 'upload empty' => [static fn (array $b): array => [...$b, 'upload' => []]];
         yield 'no job id' => [static fn (array $b): array => ['state' => 'uploading', 'upload' => $b['upload']]];
         yield 'dot job id' => [static fn (array $b): array => [...$b, 'job_id' => '..']];
+        yield 'slash job id' => [static fn (array $b): array => [...$b, 'job_id' => 'a/b']];
+        yield 'backslash job id' => [static fn (array $b): array => [...$b, 'job_id' => 'a\\b']];
     }
 
     /**

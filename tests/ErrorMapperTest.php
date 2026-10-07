@@ -185,13 +185,41 @@ final class ErrorMapperTest extends TestCase
         yield 'decimal' => ['1.5', null];
         yield 'empty' => ['', null];
         yield 'null' => [null, null];
-        yield 'huge' => ['99999999999', null];
+        yield 'huge' => ['99999999999', 99999999999];
+        yield 'leading zeros' => ['0000000000000000000000000000000000007', 7];
+        yield 'at the cap' => ['9007199254740991', 9007199254740991];
+        yield 'above the cap' => ['9007199254740992', 9007199254740991];
+        yield '400 digits' => [str_repeat('9', 400), 9007199254740991];
+        yield 'plus sign' => ['+5', null];
     }
 
     #[DataProvider('retryAfterValues')]
     public function testRetryAfterIsWholeSecondsOnly(?string $header, ?int $expected): void
     {
         self::assertSame($expected, ErrorMapper::parseRetryAfter($header));
+    }
+
+    /** @return iterable<string, array{string, int|null}> */
+    public static function retryAfterDetails(): iterable
+    {
+        yield 'seconds' => ['3600', 3600];
+        yield 'zero' => ['0', 0];
+        yield 'beyond int64' => ['99999999999999999999', 9007199254740991];
+        yield '400 digits' => [str_repeat('9', 400), 9007199254740991];
+        yield 'negative' => ['-1', null];
+        yield 'fraction' => ['1.5', null];
+        yield 'string' => ['"60"', null];
+        yield 'null' => ['null', null];
+    }
+
+    #[DataProvider('retryAfterDetails')]
+    public function testTheRetryAfterSecondsDetailIsAnIntegerOfAnyLength(string $json, ?int $expected): void
+    {
+        $nested = self::map(429, '{"error":"agent_purchase_capped","code":4038,"details":{"retry_after_seconds":'.$json.'}}');
+        $top = self::map(429, '{"error":"agent_purchase_capped","code":4038,"retry_after_seconds":'.$json.'}');
+
+        self::assertSame($expected, $nested->retryAfter);
+        self::assertSame($expected, $top->retryAfter);
     }
 
     public function testTheTokenIsScrubbedFromEveryField(): void

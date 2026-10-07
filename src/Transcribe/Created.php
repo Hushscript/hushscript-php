@@ -25,7 +25,7 @@ final class Created
     public static function parse(#[\SensitiveParameter] array $body, int $status = 200): self
     {
         $jobId = $body['job_id'] ?? null;
-        if (! is_string($jobId) || $jobId === '' || $jobId === '.' || $jobId === '..') {
+        if (! is_string($jobId) || ! Shape::usable($jobId)) {
             throw Shape::bad('a create response without a job id', $status);
         }
         $upload = $body['upload'] ?? null;

@@ -44,7 +44,7 @@ final class GuzzleMultiTransport implements PartTransport
     public function send(#[\SensitiveParameter] RequestInterface $request, float $timeout): PromiseInterface
     {
         return $this->client->sendAsync($request, ['timeout' => $timeout])
-            ->then(null, static function (\Throwable $failure): never {
+            ->then(null, static function (#[\SensitiveParameter] \Throwable $failure): never {
                 throw PartFailure::of($failure);
             });
     }

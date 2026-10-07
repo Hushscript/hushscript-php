@@ -158,6 +158,29 @@ final class RetryMiddlewareTest extends TestCase
         self::assertSame([7.0, 60.0], $rig->clock->sleeps);
     }
 
+    /** @return iterable<string, array{string, int}> */
+    public static function hugeRetryAfter(): iterable
+    {
+        yield '10 digits' => ['4000000000', 4_000_000_000];
+        yield '400 digits' => [str_repeat('9', 400), 9007199254740991];
+    }
+
+    #[DataProvider('hugeRetryAfter')]
+    public function testARetryAfterOfAnyLengthIsOverSixtyAndIsNotRetried(string $header, int $reported): void
+    {
+        $http = new FakeHttp([self::reply(429, slug: 'rate_limited', retryAfter: $header), self::ok()]);
+        $rig = new Rig($http);
+
+        try {
+            $rig->api->request('GET', '/v1/account');
+            self::fail('expected a RateLimitError');
+        } catch (RateLimitError $error) {
+            self::assertSame($reported, $error->retryAfter);
+        }
+        self::assertCount(1, $http->requests);
+        self::assertSame([], $rig->clock->sleeps);
+    }
+
     public function testRetryAfterOver60On429RaisesRateLimitErrorAtOnce(): void
     {
         $http = new FakeHttp([self::reply(429, slug: 'rate_limited', retryAfter: '61')]);

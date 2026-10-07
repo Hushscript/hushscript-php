@@ -63,7 +63,7 @@ final class Transcripts
     {
         $segment = Shape::segment($id, 'transcript id');
 
-        return $this->exchange->fetch('GET', '/v1/transcripts/'.$segment, [], null, static fn (Body $body): Transcript => Transcript::fromApi($body));
+        return $this->exchange->fetch('GET', '/v1/transcripts/'.$segment, [], null, static fn (#[\SensitiveParameter] Body $body): Transcript => Transcript::fromApi($body));
     }
 
     /**
@@ -78,7 +78,7 @@ final class Transcripts
             '/v1/transcripts/deleted',
             self::query($cursor, null),
             null,
-            static fn (Body $body): Page => new Page(array_map(DeletedTranscript::fromApi(...), $body->list('deleted')), $body->nullableString('next_cursor')),
+            static fn (#[\SensitiveParameter] Body $body): Page => new Page(array_map(DeletedTranscript::fromApi(...), $body->list('deleted')), $body->nullableString('next_cursor')),
         ));
     }
 
@@ -90,7 +90,7 @@ final class Transcripts
             '/v1/transcripts',
             self::query($cursor, $size),
             null,
-            static fn (Body $body): Page => new Page(array_map(TranscriptSummary::fromApi(...), $body->list('transcripts')), $body->nullableString('next_cursor')),
+            static fn (#[\SensitiveParameter] Body $body): Page => new Page(array_map(TranscriptSummary::fromApi(...), $body->list('transcripts')), $body->nullableString('next_cursor')),
         );
     }
 

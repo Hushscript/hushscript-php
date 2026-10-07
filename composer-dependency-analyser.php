@@ -23,4 +23,6 @@ return (new Configuration())
         'Hushscript\\Scripts\\generate',
     ])
     // The coverage gate in scripts/ parses clover.xml; it is a dev script, not part of the package.
-    ->ignoreErrorsOnExtensionAndPath('ext-simplexml', __DIR__.'/scripts', [ErrorType::SHADOW_DEPENDENCY]);
+    ->ignoreErrorsOnExtensionAndPath('ext-simplexml', __DIR__.'/scripts', [ErrorType::SHADOW_DEPENDENCY])
+    // The sensitive-parameter guard tokenizes the sources; only the test suite needs the extension.
+    ->ignoreErrorsOnExtensionAndPath('ext-tokenizer', __DIR__.'/tests', [ErrorType::SHADOW_DEPENDENCY]);

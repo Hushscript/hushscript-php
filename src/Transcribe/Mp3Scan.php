@@ -166,6 +166,10 @@ final class Mp3Scan
     /** Moves to the next valid frame header after the position; false when the file has none. */
     private function resync(): bool
     {
+        // After a failed skipTag() the buffer is empty at the tag: load it first, or the increment lands beyond it.
+        if (! $this->have(1)) {
+            return false;
+        }
         ++$this->position;
         while (true) {
             if ($this->position <= strlen($this->buffer) && preg_match(self::HEADER_PATTERN, $this->buffer, $found, PREG_OFFSET_CAPTURE, $this->position) === 1) {

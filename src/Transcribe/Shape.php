@@ -28,12 +28,20 @@ final class Shape
     }
 
     /**
+     * Whether `segment()` accepts the id: what an id the server sends has to be before the SDK builds a path from it (R53).
+     */
+    public static function usable(string $id): bool
+    {
+        return $id !== '' && $id !== '.' && $id !== '..' && preg_match('//u', $id) === 1 && strpbrk($id, '/\\') === false;
+    }
+
+    /**
      * An id that goes into a URL path as one segment: non-empty, valid UTF-8, not a dot segment and without a
      * slash or backslash (which a client or proxy may treat as a separator once decoded), percent-encoded.
      */
     public static function segment(mixed $id, string $name = 'id'): string
     {
-        if (! is_string($id) || $id === '' || $id === '.' || $id === '..' || preg_match('//u', $id) !== 1 || strpbrk($id, '/\\') !== false) {
+        if (! is_string($id) || ! self::usable($id)) {
             throw new PreflightError($name.' must be a non-empty string without a slash that is not "." or "..".', 'invalid_option');
         }
 

@@ -15,6 +15,9 @@ use Psr\Http\Message\ResponseInterface;
  */
 final class ErrorMapper
 {
+    /** The most a retry wait is reported as: 2^53-1, the largest integer every SDK shares. */
+    private const MAX_SECONDS = 9007199254740991;
+
     /** @var array<string, class-string<HushscriptException>> */
     private const BY_SLUG = [
         'upload_incomplete' => UploadError::class,
@@ -89,15 +92,26 @@ final class ErrorMapper
         if ($value === null) {
             return null;
         }
-        $text = trim($value);
 
-        return preg_match('/^[0-9]{1,9}$/D', $text) === 1 ? (int) $text : null;
+        return self::wholeSeconds(trim($value));
+    }
+
+    /** A non-negative integer of any length, capped at 2^53-1 (so one above 60 stays "over 60"); anything else is absent (R71). */
+    private static function wholeSeconds(string $digits): ?int
+    {
+        if (preg_match('/^[0-9]+$/D', $digits) !== 1) {
+            return null;
+        }
+        $significant = ltrim($digits, '0');
+
+        return strlen($significant) > 16 ? self::MAX_SECONDS : min((int) $significant, self::MAX_SECONDS);
     }
 
     public static function fromResponse(#[\SensitiveParameter] ResponseInterface $response, Credentials $credentials, string $method, #[\SensitiveParameter] string $path): HushscriptException
     {
         $status = $response->getStatusCode();
-        $body = self::parseBody((string) $response->getBody());
+        $content = (string) $response->getBody();
+        $body = self::parseBody($content);
         $slug = $body['error'] ?? null;
         $codeValue = $body['code'] ?? null;
         $numericCode = is_int($codeValue) ? $codeValue : null;
@@ -109,7 +123,13 @@ final class ErrorMapper
         $details = self::asRecord(self::snakeKeys($credentials->scrubValue(self::extraDetails($body))));
         if ($retryAfter === null) {
             $fromDetails = $details['retry_after_seconds'] ?? null;
-            $retryAfter = is_int($fromDetails) && $fromDetails >= 0 ? $fromDetails : null;
+            if (is_int($fromDetails) && $fromDetails >= 0) {
+                $retryAfter = min($fromDetails, self::MAX_SECONDS);
+            } elseif (is_float($fromDetails)) {
+                // An integer beyond int64 decodes as a float; decoded again with big integers kept as digit strings it is exact.
+                $exact = self::asRecord(self::snakeKeys(self::extraDetails(self::parseBody($content, JSON_BIGINT_AS_STRING))))['retry_after_seconds'] ?? null;
+                $retryAfter = is_string($exact) ? self::wholeSeconds($exact) : null;
+            }
         }
         $operation = self::operationKey($method, $path);
         $scope = $operation === null ? null : (Scopes::OPERATIONS[$operation] ?? null);
@@ -136,10 +156,10 @@ final class ErrorMapper
     }
 
     /** @return array<mixed> */
-    private static function parseBody(#[\SensitiveParameter] string $content): array
+    private static function parseBody(#[\SensitiveParameter] string $content, int $flags = 0): array
     {
         try {
-            $parsed = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+            $parsed = json_decode($content, true, 512, JSON_THROW_ON_ERROR | $flags);
         } catch (\JsonException) {
             return [];
         }

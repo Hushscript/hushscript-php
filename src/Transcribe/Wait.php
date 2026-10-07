@@ -40,7 +40,7 @@ final class Wait
      */
     public static function job(Exchange $api, string $jobId, bool $full = false): array
     {
-        return $api->fetch('GET', '/v1/jobs/'.Shape::segment($jobId, 'job id'), [], null, static function (Body $body) use ($full): array {
+        return $api->fetch('GET', '/v1/jobs/'.Shape::segment($jobId, 'job id'), [], null, static function (#[\SensitiveParameter] Body $body) use ($full): array {
             $body->string('state');
             $body->nullableString('transcript_id');
             $body->nullableString('error');
@@ -50,7 +50,7 @@ final class Wait
             }
             // An id the server sends for the transcript goes into a URL path: one that cannot is an unusable body.
             $transcript = $body->nullableString('transcript_id');
-            if ($transcript === '.' || $transcript === '..') {
+            if ($transcript !== null && ! Shape::usable($transcript)) {
                 throw new BadBody('response.transcript_id: expected an id');
             }
             if ($full) {
@@ -130,6 +130,6 @@ final class Wait
 
     public static function transcript(Exchange $api, string $transcriptId): Transcript
     {
-        return $api->fetch('GET', '/v1/transcripts/'.Shape::segment($transcriptId, 'transcript id'), [], null, static fn (Body $body): Transcript => Transcript::fromApi($body));
+        return $api->fetch('GET', '/v1/transcripts/'.Shape::segment($transcriptId, 'transcript id'), [], null, static fn (#[\SensitiveParameter] Body $body): Transcript => Transcript::fromApi($body));
     }
 }
