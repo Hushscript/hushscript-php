@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hushscript;
 
 use Hushscript\Exception\ConfigurationError;
+use Hushscript\Transcribe\PartTransport;
 use Psr\Http\Client\ClientInterface;
 
 /**
@@ -28,7 +29,7 @@ final class Config
     public const SETUP_HINT = 'Set HUSHSCRIPT_TOKEN or pass a token. Create one in the Hushscript app: '
         .'Account → MCP (app.hushscript.com/account/mcp).';
 
-    private const OPTIONS = ['base_url', 'timeout', 'max_retries', 'log_level', 'clock', 'http_client'];
+    private const OPTIONS = ['base_url', 'timeout', 'max_retries', 'log_level', 'clock', 'http_client', 'part_transport'];
 
     private const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 
@@ -40,13 +41,14 @@ final class Config
         public readonly string $logLevel,
         public readonly Clock $clock,
         public readonly ?ClientInterface $httpClient,
+        public readonly ?PartTransport $partTransport = null,
     ) {
     }
 
     /**
      * An explicit option beats its environment variable.
      *
-     * @param  array<string, mixed>  $options  base_url, timeout, max_retries, log_level, clock, http_client
+     * @param  array<string, mixed>  $options  base_url, timeout, max_retries, log_level, clock, http_client, part_transport
      * @param  array<string, string>|null  $env  defaults to the process environment
      */
     public static function resolve(#[\SensitiveParameter] ?string $token = null, #[\SensitiveParameter] array $options = [], #[\SensitiveParameter] ?array $env = null): self
@@ -97,7 +99,12 @@ final class Config
             throw new ConfigurationError('http_client must implement Psr\Http\Client\ClientInterface.');
         }
 
-        return new self(new Credentials($resolvedToken), $baseUrl, (float) $timeout, $maxRetries, $level, $clock, $httpClient);
+        $partTransport = $options['part_transport'] ?? null;
+        if ($partTransport !== null && ! $partTransport instanceof PartTransport) {
+            throw new ConfigurationError('part_transport must implement '.PartTransport::class.'.');
+        }
+
+        return new self(new Credentials($resolvedToken), $baseUrl, (float) $timeout, $maxRetries, $level, $clock, $httpClient, $partTransport);
     }
 
     /**

@@ -863,6 +863,39 @@ final class RetryMiddlewareTest extends TestCase
         );
     }
 
+    public function testAPutToASignedStorageUrlIsAPartUploadAndIsRetried(): void
+    {
+        $http = new FakeHttp([self::reply(503), self::reply(200)]);
+        $rig = new Rig($http);
+
+        $response = $rig->transport->sendRequest(new Request('PUT', 'https://r2.example/bucket/obj?X-Amz-Signature=secret', [], 'bytes'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertCount(2, $http->requests);
+        self::assertSame(['', ''], $http->authorizations, 'storage never sees the token');
+    }
+
+    public function testAPutToASignedStorageUrlIsRetriedAfterALostConnection(): void
+    {
+        $http = new FakeHttp([self::lostResponse(), self::reply(200)]);
+        $rig = new Rig($http);
+
+        $rig->transport->sendRequest(new Request('PUT', 'https://r2.example/bucket/obj?X-Amz-Signature=secret', [], 'bytes'));
+
+        self::assertCount(2, $http->requests);
+    }
+
+    public function testAnotherMethodOnAForeignHostIsStillAnUnclassifiedMutation(): void
+    {
+        $http = new FakeHttp([self::reply(503)]);
+        $rig = new Rig($http);
+
+        $response = $rig->transport->sendRequest(new Request('POST', 'https://r2.example/bucket/obj', [], 'bytes'));
+
+        self::assertSame(503, $response->getStatusCode());
+        self::assertCount(1, $http->requests);
+    }
+
     public function testForeignRequestsAreLoggedWithoutTheirUrl(): void
     {
         $http = new FakeHttp([self::ok()]);

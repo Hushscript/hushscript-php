@@ -6,6 +6,12 @@ namespace Hushscript;
 
 use GuzzleHttp\Client as GuzzleClient;
 use Hushscript\Http\RetryMiddleware;
+use Hushscript\Http\RetryPolicy;
+use Hushscript\Resource\Jobs;
+use Hushscript\Transcribe\GuzzleMultiTransport;
+use Hushscript\Transcribe\PartTransport;
+use Hushscript\Transcribe\Pipeline;
+use Hushscript\Transcribe\SyncTransport;
 use Psr\Http\Client\ClientInterface;
 
 /**
@@ -17,26 +23,44 @@ final class Client
 
     private readonly Api $api;
 
+    private readonly Pipeline $pipeline;
+
+    private readonly Jobs $jobs;
+
     /**
-     * @param  array<string, mixed>  $options  base_url, timeout, max_retries, log_level, clock, http_client (a PSR-18 client)
+     * @param  array<string, mixed>  $options  base_url, timeout, max_retries, log_level, clock, http_client (a PSR-18 client), part_transport (advanced: how part uploads are sent)
      *
      * @throws \Hushscript\Exception\ConfigurationError
      */
     public function __construct(#[\SensitiveParameter] ?string $token = null, #[\SensitiveParameter] array $options = [])
     {
         $this->config = Config::resolve($token, $options);
+        $log = new Log($this->config->logLevel);
         $inner = $this->config->httpClient === null
             ? self::defaultHttpClient($this->config->timeout)
-            : self::withoutRedirects($this->config->httpClient);
+            : self::withoutRedirects($this->config->httpClient, $log);
         $transport = new RetryMiddleware(
             $inner,
             $this->config->credentials,
             $this->config->baseUrl,
             $this->config->clock,
-            new Log($this->config->logLevel),
+            $log,
             $this->config->maxRetries,
         );
         $this->api = new Api($transport, $this->config->credentials, $this->config->baseUrl);
+        $config = $this->config;
+        $this->pipeline = new Pipeline(
+            $this->api,
+            $config->credentials,
+            $config->baseUrl,
+            $config->clock,
+            $log,
+            $config->maxRetries,
+            static fn (): PartTransport => $config->partTransport
+                ?? ($config->httpClient === null && GuzzleMultiTransport::available() ? new GuzzleMultiTransport($config->timeout) : new SyncTransport($inner)),
+            RetryPolicy::fullJitter(...),
+        );
+        $this->jobs = new Jobs($this->pipeline);
     }
 
     public function api(): Api
@@ -45,17 +69,84 @@ final class Client
     }
 
     /**
-     * Redirects are never followed (R55). A client that can be reconfigured, like Symfony's
-     * HttpClient, is told so; any other client must already behave that way (README).
+     * Uploads a file, waits for the transcript and returns it (spec 8). Part uploads run concurrently
+     * on the default HTTP client; with a client of your own they go one at a time.
+     *
+     * @param  string  $path  a path to an MP3, M4A/MP4/MOV, WAV, FLAC or Ogg file
+     * @param  array<string, mixed>  $options  title, language, speakers, translate_to, keyterms, prompt, medical,
+     *                                         multichannel, auto_insights, matter_code, duration_seconds,
+     *                                         idempotency_key, concurrency, wait_timeout, on_progress, on_resume_token
+     * @return array<string, mixed>  the transcript as the API sent it
+     *
+     * @throws \Hushscript\Exception\HushscriptException
      */
-    private static function withoutRedirects(ClientInterface $client): ClientInterface
+    public function transcribe(string $path, array $options = []): array
     {
-        if (! method_exists($client, 'withOptions')) {
+        return $this->pipeline->transcribe($path, $options);
+    }
+
+    /**
+     * Picks a transcription up from the resume token of an earlier call (spec 7.3). The file is needed
+     * only while the job is still uploading. The options may also come second: `resume($token, $options)`.
+     *
+     * @param  array<string, mixed>|string|null  $file  a path, or the options when no file is given
+     * @param  array<string, mixed>  $options  concurrency, wait_timeout, on_progress
+     * @return array<string, mixed>
+     *
+     * @throws \Hushscript\Exception\HushscriptException
+     */
+    public function resume(#[\SensitiveParameter] string $token, array|string|null $file = null, array $options = []): array
+    {
+        if (is_array($file)) {
+            return $this->pipeline->resume($token, null, $file);
+        }
+
+        return $this->pipeline->resume($token, $file, $options);
+    }
+
+    public function jobs(): Jobs
+    {
+        return $this->jobs;
+    }
+
+    /**
+     * Redirects are never followed (R55). A client that can be reconfigured, like Symfony's
+     * HttpClient, is told so; any other client must already behave that way (README). The method is
+     * called only when it is public and takes one array (or untyped) argument; anything else, or a
+     * failure, leaves the client as it is, because a foreign client's quirks never break construction.
+     */
+    private static function withoutRedirects(ClientInterface $client, Log $log): ClientInterface
+    {
+        if (! self::acceptsOptions($client)) {
             return $client;
         }
-        $configured = $client->withOptions(['max_redirects' => 0]);
+        try {
+            $configured = $client->withOptions(['max_redirects' => 0]); // @phpstan-ignore method.notFound
+        } catch (\Throwable $failure) {
+            $log->note('withOptions() failed ('.$failure::class.'); the HTTP client is used as it is');
+
+            return $client;
+        }
 
         return $configured instanceof ClientInterface ? $configured : $client;
+    }
+
+    private static function acceptsOptions(ClientInterface $client): bool
+    {
+        if (! method_exists($client, 'withOptions')) {
+            return false;
+        }
+        try {
+            $method = new \ReflectionMethod($client, 'withOptions');
+        } catch (\ReflectionException) {
+            return false;
+        }
+        if (! $method->isPublic() || $method->isStatic() || $method->getNumberOfRequiredParameters() !== 1) {
+            return false;
+        }
+        $type = $method->getParameters()[0]->getType();
+
+        return $type === null || ($type instanceof \ReflectionNamedType && in_array($type->getName(), ['array', 'mixed'], true));
     }
 
     private static function defaultHttpClient(float $timeout): ClientInterface

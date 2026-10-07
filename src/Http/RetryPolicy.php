@@ -33,6 +33,12 @@ final class RetryPolicy
     {
     }
 
+    /** Maps a backoff ceiling to a delay in [0, ceiling]. */
+    public static function fullJitter(float $ceiling): float
+    {
+        return $ceiling * (random_int(0, 1_000_000) / 1_000_000);
+    }
+
     /** Full jitter: random(0, min(8 s, 0.5 s * 2^attempt)); `$attempt` counts retries from 0. */
     public static function backoffCeiling(int $attempt): float
     {

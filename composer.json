@@ -12,7 +12,9 @@
     "require": {
         "php": ">=8.2",
         "ext-json": "*",
+        "ext-mbstring": "*",
         "guzzlehttp/guzzle": "^7.9",
+        "guzzlehttp/promises": "^2.0",
         "guzzlehttp/psr7": "^2.7",
         "james-heinrich/getid3": "^1.9",
         "psr/http-client": "^1.0",

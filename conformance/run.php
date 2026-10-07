@@ -9,18 +9,27 @@ declare(strict_types=1);
  * does not fail the run; CONFORMANCE_STRICT=1 turns every skip into a failure, which is what the
  * contract asks for once the friendly layer is complete.
  *
- * PHP is single-threaded, so the contract's concurrent driver does not port directly: the injected
- * clock advances itself and the mock's clock in the same step when the SDK sleeps. That covers every
- * scenario whose waits are the SDK's own. Scenarios where the mock holds a response until the clock
- * moves (heartbeat-cadence) need a driver that ticks while a request is in flight (curl_multi).
+ * PHP is single-threaded, so the contract's concurrent driver is folded into the injected clock. It
+ * does two things. When the SDK sleeps (its own waits: backoff, pacing, polling) the clock advances
+ * itself and the mock's clock by the same amount. While the upload waits on part requests that are
+ * already in flight, the SDK's loop calls idle() between looks at its transfers (IdleClock), and the
+ * clock does what the driver does in the contract: when every request in flight is one the mock is
+ * holding until the clock moves (inFlight == pendingHolds, read from GET /__state), it advances both
+ * clocks to the sooner of the SDK's next own event (the heartbeat, a retry) and the mock's next
+ * release (nextHoldAt); a request that is in flight and not held is real work, so it waits for it.
+ * A held response is delivered before a timer due at the same instant because the SDK looks at its
+ * transfers (and so receives the response) before it looks at the heartbeat.
  */
 
 namespace Hushscript\Conformance;
 
 use GuzzleHttp\Client as Http;
 use Hushscript\Client;
-use Hushscript\Clock;
 use Hushscript\Exception\HushscriptException;
+use Hushscript\IdleClock;
+use Hushscript\Transcribe\Probe;
+use Hushscript\Transcribe\Sniff;
+use Hushscript\Transcribe\Source;
 
 require __DIR__.'/../vendor/autoload.php';
 
@@ -48,6 +57,11 @@ final class Mock
         $this->http->post($path, $json === [] ? [] : ['json' => $json]);
     }
 
+    public function bytes(string $path): string
+    {
+        return (string) $this->http->get($path)->getBody();
+    }
+
     /** @return array<mixed> */
     private static function decode(string $body): array
     {
@@ -57,10 +71,17 @@ final class Mock
     }
 }
 
-/** Time that moves only when the SDK sleeps: the mock's clock and the SDK's are the same number. */
-final class VirtualClock implements Clock
+/**
+ * Time that moves only when the SDK sleeps or waits on held requests: the mock's clock and the SDK's
+ * are the same number (see the header).
+ */
+final class VirtualClock implements IdleClock
 {
+    private const STALL_SECONDS = 20.0;
+
     public float $time = 0.0;
+
+    private ?float $stalledSince = null;
 
     public function __construct(private readonly Mock $mock)
     {
@@ -74,6 +95,38 @@ final class VirtualClock implements Clock
 
     #[\Override]
     public function sleep(float $seconds): void
+    {
+        $this->advance($seconds);
+    }
+
+    #[\Override]
+    public function idle(int $inFlight, float $deadline): void
+    {
+        $state = $this->mock->get('/__state');
+        $holds = is_int($state['pendingHolds'] ?? null) ? $state['pendingHolds'] : 0;
+        $release = $state['nextHoldAt'] ?? null;
+        if ($inFlight > $holds) {
+            // A request that is out and not held is work the SDK waits for in real time.
+            $this->stalledSince = null;
+            usleep(2000);
+
+            return;
+        }
+        $target = min($deadline, is_int($release) || is_float($release) ? (float) $release : INF);
+        if (! is_finite($target)) {
+            $this->stalledSince ??= microtime(true);
+            if (microtime(true) - $this->stalledSince > self::STALL_SECONDS) {
+                throw new \RuntimeException('SDK stalled: nothing in flight is due and the SDK has no event to wait for');
+            }
+            usleep(5000);
+
+            return;
+        }
+        $this->stalledSince = null;
+        $this->advance($target - $this->time);
+    }
+
+    private function advance(float $seconds): void
     {
         if ($seconds <= 0) {
             return;
@@ -221,7 +274,140 @@ function balance(Client $hs): array
     ];
 }
 
-const OPS = ['balance'];
+/** Fixture files fetched from the mock into a scratch directory, once each. */
+final class Files
+{
+    /** @var array<string, float> */
+    public array $durations = [];
+
+    public function __construct(private readonly Mock $mock, private readonly string $root)
+    {
+    }
+
+    public function path(string $name): string
+    {
+        $name = str_contains($name, '/') ? $name : "media/{$name}";
+        $path = "{$this->root}/{$name}";
+        if (! is_file($path)) {
+            if (! is_dir(dirname($path))) {
+                mkdir(dirname($path), 0o700, true);
+            }
+            file_put_contents($path, $this->mock->bytes("/__files/fixtures/{$name}"));
+        }
+
+        return $path;
+    }
+
+    /** @param  array<mixed>  $call */
+    public function prepare(array $call): void
+    {
+        foreach ([$call['prior'] ?? null, $call] as $step) {
+            $args = is_array($step) && is_array($step['args'] ?? null) ? $step['args'] : [];
+            if (isset($args['file']) && is_string($args['file'])) {
+                $this->path($args['file']);
+            }
+        }
+        if (($call['op'] ?? null) === 'probe') {
+            $listing = $this->mock->get('/__files/fixtures/media/durations.json');
+            foreach ($listing as $name => $seconds) {
+                if (is_string($name) && (is_int($seconds) || is_float($seconds))) {
+                    $this->durations[$name] = (float) $seconds;
+                    $this->path($name);
+                }
+            }
+        }
+    }
+}
+
+/**
+ * @param  array<mixed>  $args
+ * @return array<string, mixed>
+ */
+function options(array $args): array
+{
+    $options = is_array($args['options'] ?? null) ? $args['options'] : [];
+    $out = [];
+    foreach ($options as $key => $value) {
+        $out[snake((string) $key)] = $value;
+    }
+
+    return $out;
+}
+
+/**
+ * @param  array<string, mixed>  $body
+ * @return array<string, mixed>
+ */
+function transcriptResult(array $body): array
+{
+    $inner = is_array($body['body'] ?? null) ? $body['body'] : [];
+    $original = is_array($inner['original'] ?? null) ? $inner['original'] : [];
+    $utterances = is_array($original['utterances'] ?? null) ? $original['utterances'] : [];
+
+    return [
+        'id' => $body['id'] ?? null,
+        'title' => $body['title'] ?? null,
+        'language' => $body['language_detected'] ?? null,
+        'durationSeconds' => $body['duration_seconds'] ?? null,
+        'utteranceCount' => count($utterances),
+        'raw' => $body,
+    ];
+}
+
+/**
+ * @param  array<mixed>  $args
+ * @return array<string, mixed>
+ */
+function probe(array $args, Files $files): array
+{
+    $tolerance = is_int($args['toleranceSeconds'] ?? null) || is_float($args['toleranceSeconds'] ?? null) ? (float) $args['toleranceSeconds'] : 1.0;
+    $refuse = is_array($args['refuse'] ?? null) ? $args['refuse'] : [];
+    $failures = [];
+    $refused = 0;
+    foreach ($files->durations as $name => $expected) {
+        $source = Source::open($files->path($name));
+        if (in_array($name, $refuse, true)) {
+            // R46: the sniffer turns these away before any probe runs.
+            if (Sniff::format($source->head()) === null) {
+                $refused++;
+            } else {
+                $failures[] = ['file' => $name, 'expected' => 'refused', 'got' => 'sniffed'];
+            }
+
+            continue;
+        }
+        try {
+            $got = Probe::seconds($source);
+        } catch (HushscriptException) {
+            $got = null;
+        }
+        if ($got === null || abs($got - $expected) > $tolerance) {
+            $failures[] = ['file' => $name, 'expected' => $expected, 'got' => $got];
+        }
+    }
+
+    return ['checked' => count($files->durations) - count($refuse), 'refused' => $refused, 'failures' => $failures];
+}
+
+const OPS = ['balance', 'transcribe', 'resume', 'probe'];
+
+/**
+ * @param  array<mixed>  $step
+ * @return array<string, mixed>
+ */
+function perform(Client $hs, array $step, Files $files, ?string $token): array
+{
+    $args = is_array($step['args'] ?? null) ? $step['args'] : [];
+    $file = is_string($args['file'] ?? null) ? $files->path($args['file']) : '';
+
+    return match ($step['op'] ?? null) {
+        'balance' => balance($hs),
+        'transcribe' => transcriptResult($hs->transcribe($file, options($args))),
+        'resume' => transcriptResult($hs->resume($token ?? '', $file, options($args))),
+        'probe' => probe($args, $files),
+        default => throw new \LogicException('unmapped op'),
+    };
+}
 
 /**
  * @param  array<mixed>  $call
@@ -239,7 +425,7 @@ function unmapped(array $call): array
 }
 
 /** @return array{string, string} */
-function runScenario(Mock $mock, string $name): array
+function runScenario(Mock $mock, string $name, string $scratch): array
 {
     $scenario = $mock->get("/__files/scenarios/{$name}.json");
     $call = is_array($scenario['call'] ?? null) ? $scenario['call'] : [];
@@ -248,20 +434,35 @@ function runScenario(Mock $mock, string $name): array
     if ($missing !== []) {
         return ['SKIP', 'op '.implode(', ', $missing).' is not mapped yet'];
     }
+    $files = new Files($mock, $scratch);
+    $files->prepare($call);
     $mock->post('/__scenario', ['name' => $name]);
-    $hs = new Client(TEST_TOKEN, ['base_url' => BASE_URL, 'clock' => new VirtualClock($mock)]);
+    $clock = new VirtualClock($mock);
+    $hs = new Client(TEST_TOKEN, ['base_url' => BASE_URL, 'clock' => $clock]);
     $problems = [];
-    $mock->post('/__mark');
+    $token = null;
     try {
-        $result = balance($hs);
+        $prior = $call['prior'] ?? null;
+        if (is_array($prior)) {
+            try {
+                perform($hs, $prior, $files, null);
+                $problems[] = 'the prior call returned; it should have failed';
+            } catch (\Throwable $error) {
+                $wanted = is_array($prior['expectError'] ?? null) ? $prior['expectError'] : [];
+                $problems = [...$problems, ...checkError($wanted, $error)];
+                $token = $error instanceof HushscriptException ? ($error->resumeToken ?? null) : null;
+            }
+        }
+        $mock->post('/__mark');
+        $result = perform($hs, $call, $files, $token);
         if (isset($expect['error'])) {
             $problems[] = 'expected an error, the call returned';
         } elseif (isset($expect['result']) && is_array($expect['result'])) {
-            $problems = subset($expect['result'], $result);
+            $problems = [...$problems, ...subset($expect['result'], $result)];
         }
     } catch (\Throwable $error) {
         if (isset($expect['error']) && is_array($expect['error'])) {
-            $problems = checkError($expect['error'], $error);
+            $problems = [...$problems, ...checkError($expect['error'], $error)];
         } else {
             $problems[] = 'raised '.$error::class.': '.$error->getMessage();
         }
@@ -280,6 +481,7 @@ function main(): int
     $strict = getenv('CONFORMANCE_STRICT') === '1';
     $counts = ['PASS' => 0, 'FAIL' => 0, 'SKIP' => 0];
     $mock = new Mock();
+    $scratch = sys_get_temp_dir().'/hushscript-conformance-'.getmypid();
     $names = $mock->get('/__scenarios')['scenarios'] ?? [];
     if (! is_array($names) || $names === []) {
         fwrite(STDERR, "the mock lists no scenarios\n");
@@ -287,13 +489,19 @@ function main(): int
         return 1;
     }
     foreach (array_filter($names, is_string(...)) as $name) {
-        [$status, $reason] = runScenario($mock, $name);
+        [$status, $reason] = runScenario($mock, $name, $scratch);
         if ($status === 'SKIP' && $strict) {
             [$status, $reason] = ['FAIL', "skipped in strict mode: {$reason}"];
         }
         $counts[$status]++;
         echo $status.' '.$name.($reason === '' ? '' : ": {$reason}")."\n";
     }
+    $leftover = glob($scratch.'/media/*');
+    foreach (is_array($leftover) ? $leftover : [] as $file) {
+        unlink($file);
+    }
+    @rmdir($scratch.'/media');
+    @rmdir($scratch);
     echo "{$counts['PASS']} passed, {$counts['FAIL']} failed, {$counts['SKIP']} skipped\n";
 
     return $counts['FAIL'] > 0 || $counts['PASS'] === 0 ? 1 : 0;

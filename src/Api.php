@@ -33,7 +33,7 @@ final class Api
      *
      * @throws \Hushscript\Exception\HushscriptException
      */
-    public function request(string $method, string $path, array $query = [], #[\SensitiveParameter] ?array $body = null): array
+    public function request(string $method, #[\SensitiveParameter] string $path, #[\SensitiveParameter] array $query = [], #[\SensitiveParameter] ?array $body = null): array
     {
         $method = strtoupper($method);
         if (! in_array($method, self::METHODS, true)) {
@@ -77,7 +77,7 @@ final class Api
         return new ApiError('The API answered '.$status.' with a body the SDK cannot read.', 'bad_response', status: $status);
     }
 
-    private static function checkPath(string $path): void
+    private static function checkPath(#[\SensitiveParameter] string $path): void
     {
         // The path is appended to the configured origin, so it cannot change the host; the shape check
         // keeps the retry class (decided from the actual path) honest.
@@ -92,7 +92,7 @@ final class Api
     /**
      * @param  array<string, scalar|list<scalar>|null>  $query
      */
-    private static function queryString(array $query): string
+    private static function queryString(#[\SensitiveParameter] array $query): string
     {
         $pairs = [];
         foreach ($query as $name => $value) {

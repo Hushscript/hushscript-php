@@ -1,0 +1,770 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Hushscript\Tests\Transcribe;
+
+use GuzzleHttp\Psr7\Response;
+use Hushscript\Exception\ApiError;
+use Hushscript\Exception\AuthenticationError;
+use Hushscript\Exception\DailyLimitError;
+use Hushscript\Exception\FileLimitError;
+use Hushscript\Exception\HushscriptException;
+use Hushscript\Exception\InsufficientBalanceError;
+use Hushscript\Exception\JobFailedError;
+use Hushscript\Exception\NetworkError;
+use Hushscript\Exception\PreflightError;
+use Hushscript\Exception\RateLimitError;
+use Hushscript\Exception\UnsupportedMediaError;
+use Hushscript\Exception\UploadError;
+use Hushscript\Exception\WaitTimeoutError;
+use Hushscript\Tests\Support\FakeIdleClock;
+use Hushscript\Tests\Support\PipelineHarness;
+use Hushscript\Transcribe\PartFailure;
+use Hushscript\Transcribe\Resume;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+use Psr\Http\Message\RequestInterface;
+
+final class PipelineTest extends TestCase
+{
+    /** @var list<string> */
+    private array $temp = [];
+
+    protected function tearDown(): void
+    {
+        foreach ($this->temp as $path) {
+            @unlink($path);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $options
+     * @return array<string, mixed>
+     */
+    private static function go(PipelineHarness $harness, array $options = []): array
+    {
+        return $harness->pipeline->transcribe($harness->path(), $options);
+    }
+
+    private static function failure(PipelineHarness $harness, string $class = HushscriptException::class): HushscriptException
+    {
+        try {
+            self::go($harness);
+        } catch (HushscriptException $error) {
+            self::assertInstanceOf($class, $error); // @phpstan-ignore argument.type
+
+            return $error;
+        }
+        self::fail('expected '.$class);
+    }
+
+    /**
+     * Every string in the arguments of a trace; objects are not entered, a SensitiveParameterValue is not readable.
+     *
+     * @param  array<mixed>  $value
+     */
+    private static function traceStrings(array $value, int $depth = 0): string
+    {
+        $out = '';
+        foreach ($value as $item) {
+            if (is_string($item)) {
+                $out .= $item."\n";
+            } elseif (is_array($item) && $depth < 6) {
+                $out .= self::traceStrings($item, $depth + 1);
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  array<mixed>  $body
+     * @param  array<string, mixed>  $changes
+     * @return array<mixed>
+     */
+    private static function upload(array $body, array $changes): array
+    {
+        $upload = is_array($body['upload'] ?? null) ? $body['upload'] : [];
+
+        return [...$body, 'upload' => [...$upload, ...$changes]];
+    }
+
+    private static function fail500(): Response
+    {
+        return new Response(500);
+    }
+
+    private static function partNumber(string $url): int
+    {
+        preg_match('~/(\d+)(?:\?|$)~', $url, $match);
+
+        return (int) ($match[1] ?? 0);
+    }
+
+    public function testADirectUploadPutsEveryPartWithoutAuthorizationAndCompletesWithTheSortedEtags(): void
+    {
+        $harness = new PipelineHarness(script: fn (array $request): array => [PipelineHarness::stored('"etag-'.self::partNumber($request['url']).'"'), 0.0]);
+        $tokens = [];
+        $progress = [];
+
+        $transcript = self::go($harness, [
+            'on_resume_token' => static function (string $token) use (&$tokens): void {
+                $tokens[] = $token;
+            },
+            'on_progress' => static function (array $event) use (&$progress): void {
+                $progress[] = $event;
+            },
+        ]);
+
+        self::assertSame('tr_1', $transcript['id']);
+        self::assertSame(
+            ['GET /v1/account', 'POST /v1/uploads', 'POST /v1/uploads/job_1/heartbeat', 'POST /v1/uploads/job_1/complete', 'GET /v1/jobs/job_1', 'GET /v1/transcripts/tr_1'],
+            $harness->api->lines(),
+        );
+        self::assertSame(['PUT r2:1', 'PUT r2:2', 'PUT r2:3'], $harness->parts->lines());
+        self::assertSame(['', '', ''], array_column($harness->parts->sent, 'authorization'));
+        $lengths = array_column($harness->parts->sent, 'length');
+        self::assertSame($harness->size, array_sum($lengths));
+        self::assertSame([$harness->partSize, $harness->partSize], array_slice($lengths, 0, 2));
+        $complete = $harness->api->to('POST', '/v1/uploads/job_1/complete')[0];
+        self::assertSame(
+            ['parts' => [['n' => 1, 'etag' => 'etag-1'], ['n' => 2, 'etag' => 'etag-2'], ['n' => 3, 'etag' => 'etag-3']]],
+            json_decode((string) $complete->getBody(), true),
+        );
+        self::assertCount(1, $tokens);
+        $state = Resume::decode($tokens[0]);
+        self::assertSame(['job_1', $harness->size, 21], [$state->jobId, $state->size, $state->durationSeconds]);
+        self::assertSame(
+            ['stage' => 'uploading', 'percent' => 0, 'bytes_sent' => 0, 'bytes_total' => $harness->size],
+            $progress[0],
+        );
+        $last = null;
+        foreach ($progress as $event) {
+            if ($event['stage'] === 'uploading') {
+                $last = $event;
+            }
+        }
+        self::assertSame(100, $last['percent'] ?? null);
+        self::assertSame($harness->size, $last['bytes_sent'] ?? null);
+    }
+
+    public function testTheCreateIsOneKeyedPostWithTheOptions(): void
+    {
+        $harness = new PipelineHarness();
+
+        self::go($harness, ['title' => 'Call', 'language' => 'de', 'idempotency_key' => 'caller-key-0123456789']);
+
+        $create = $harness->api->to('POST', '/v1/uploads');
+        self::assertCount(1, $create);
+        self::assertSame(
+            ['size_bytes' => $harness->size, 'duration_seconds' => 21, 'idempotency_key' => 'caller-key-0123456789', 'title' => 'Call', 'transcription_options' => ['language_code' => 'de']],
+            json_decode((string) $create[0]->getBody(), true),
+        );
+    }
+
+    public function testAProxiedUploadSendsThePartsToTheApiWithTheTokenAndCompletesWithoutABody(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, $harness->createBody(proxied: true)));
+
+        self::go($harness);
+
+        self::assertSame(['PUT api:1'], $harness->parts->lines());
+        $part = $harness->parts->sent[0];
+        self::assertSame('http://127.0.0.1:4010/v1/uploads/job_1/parts/1', $part['url']);
+        self::assertSame('Bearer '.\Hushscript\Tests\Support\Tokens::TEST, $part['authorization']);
+        self::assertSame(['application/octet-stream'], $part['headers']['Content-Type']);
+        self::assertSame($harness->size, $part['length']);
+        self::assertSame(0, $harness->api->to('POST', '/v1/uploads/job_1/complete')[0]->getBody()->getSize());
+    }
+
+    public function testADirectUploadThatFailsOnItsFirstPartFallsBackToTheApiForTheRest(): void
+    {
+        $harness = new PipelineHarness(script: static fn (array $request): array => [str_contains($request['url'], 'r2.example') ? self::fail500() : PipelineHarness::stored(), 0.0]);
+
+        self::go($harness);
+
+        $lines = $harness->parts->lines();
+        self::assertSame(['PUT api:1', 'PUT api:2', 'PUT api:3'], array_values(array_filter($lines, static fn (string $line): bool => str_contains($line, 'api'))));
+        self::assertLessThanOrEqual(12, count(array_filter($lines, static fn (string $line): bool => str_contains($line, 'r2'))), 'each part retried at most maxRetries times');
+        self::assertSame(0, $harness->api->to('POST', '/v1/uploads/job_1/complete')[0]->getBody()->getSize());
+        self::assertSame([], $harness->api->to('GET', '/v1/uploads/job_1/part-urls'), 'no URL page is fetched on the way to the fallback');
+    }
+
+    public function testAnUploadThatHasHadADirectSuccessKeepsRetryingDirectWithAFreshUrl(): void
+    {
+        $page = null;
+        $harness = new PipelineHarness(script: static function (array $request): array {
+            $part = self::partNumber($request['url']);
+            if ($part === 1 && ! str_contains($request['url'], 'fresh')) {
+                return [self::fail500(), 0.0];
+            }
+
+            return [PipelineHarness::stored('"e'.$part.'"'), 0.0];
+        });
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', static function (RequestInterface $request) use (&$page): Response {
+            $page = $request->getUri()->getQuery();
+
+            return PipelineHarness::json(200, ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => [['n' => 1, 'url' => PipelineHarness::url(1, '&fresh=1')]], 'next_part_number' => null]);
+        });
+
+        self::go($harness);
+
+        $lines = $harness->parts->lines();
+        self::assertCount(5, array_filter($lines, static fn (string $line): bool => $line === 'PUT r2:1'), '4 attempts on the old URL, 1 on the fresh one');
+        self::assertSame([], array_filter($lines, static fn (string $line): bool => str_contains($line, 'api')));
+        self::assertSame('start=1', $page);
+        $body = json_decode((string) $harness->api->to('POST', '/v1/uploads/job_1/complete')[0]->getBody(), true);
+        self::assertIsArray($body);
+        self::assertIsArray($body['parts']);
+        self::assertSame([1, 2, 3], array_column($body['parts'], 'n'));
+    }
+
+    public function testAfterTheRetriesAndAFreshUrlAPartThatStillFailsIsPartsExhausted(): void
+    {
+        $harness = new PipelineHarness(script: static function (array $request): array {
+            return [self::partNumber($request['url']) === 1 ? self::fail500() : PipelineHarness::stored(), 0.0];
+        });
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => [['n' => 1, 'url' => PipelineHarness::url(1, '&fresh=1')]], 'next_part_number' => null]));
+
+        $error = self::failure($harness, UploadError::class);
+
+        self::assertSame('parts_exhausted', $error->errorCode);
+        self::assertCount(8, array_filter($harness->parts->lines(), static fn (string $line): bool => $line === 'PUT r2:1'), '4 attempts, a fresh URL, 4 more attempts');
+    }
+
+    /**
+     * The mode is decided once. Part 2 is held; part 1 gives up on direct first (the whole upload goes
+     * through the API), so part 2's direct success that lands later is thrown away and re-sent.
+     */
+    public function testADirectSuccessThatArrivesAfterTheSwitchToTheApiIsSentAgainThroughTheApi(): void
+    {
+        $clock = new FakeIdleClock();
+        $harness = new PipelineHarness(clock: $clock, script: static function (array $request): array {
+            if (str_contains($request['url'], 'r2.example')) {
+                return self::partNumber($request['url']) === 1 ? [self::fail500(), 0.0] : [PipelineHarness::stored('"late"'), 1000.0];
+            }
+
+            return [PipelineHarness::stored(), 0.0];
+        });
+        $clock->nextEvent = $harness->parts->nextRelease(...);
+
+        self::go($harness);
+
+        $lines = $harness->parts->lines();
+        self::assertContains('PUT api:1', $lines);
+        self::assertContains('PUT api:2', $lines, 'part 2 reached storage after the switch, so the API gets it too');
+        self::assertContains('PUT api:3', $lines);
+        self::assertSame(0, $harness->api->to('POST', '/v1/uploads/job_1/complete')[0]->getBody()->getSize(), 'a switched upload completes without a parts body');
+    }
+
+    /**
+     * The other order: part 2's direct success lands first, so part 1, which then gives up, keeps
+     * trying direct instead of switching.
+     */
+    public function testADirectSuccessThatArrivesBeforeAPartGivesUpKeepsTheUploadDirect(): void
+    {
+        $clock = new FakeIdleClock();
+        $harness = new PipelineHarness(clock: $clock, script: static function (array $request): array {
+            $part = self::partNumber($request['url']);
+            if ($part === 1 && ! str_contains($request['url'], 'fresh')) {
+                return [self::fail500(), 0.0];
+            }
+
+            return [PipelineHarness::stored('"e'.$part.'"'), $part === 1 ? 0.0 : 0.25];
+        });
+        $clock->nextEvent = $harness->parts->nextRelease(...);
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => [['n' => 1, 'url' => PipelineHarness::url(1, '&fresh=1')]], 'next_part_number' => null]));
+
+        self::go($harness);
+
+        self::assertSame([], array_filter($harness->parts->lines(), static fn (string $line): bool => str_contains($line, 'api')));
+        $body = json_decode((string) $harness->api->to('POST', '/v1/uploads/job_1/complete')[0]->getBody(), true);
+        self::assertIsArray($body);
+        self::assertIsArray($body['parts']);
+        self::assertSame([1, 2, 3], array_column($body['parts'], 'n'));
+    }
+
+    public function testAnExpiredUrlIsRefreshedOnceFromThePageAndTheUploadStaysDirect(): void
+    {
+        $harness = new PipelineHarness(script: static function (array $request): array {
+            $expired = self::partNumber($request['url']) === 1 && ! str_contains($request['url'], 'fresh');
+
+            return [$expired ? new Response(403) : PipelineHarness::stored(), 0.0];
+        });
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => [['n' => 1, 'url' => PipelineHarness::url(1, '&fresh=1')]], 'next_part_number' => null]));
+
+        self::go($harness);
+
+        self::assertCount(1, $harness->api->to('GET', '/v1/uploads/job_1/part-urls'));
+        self::assertCount(2, array_filter($harness->parts->lines(), static fn (string $line): bool => $line === 'PUT r2:1'));
+        self::assertSame([], array_filter($harness->parts->lines(), static fn (string $line): bool => str_contains($line, 'api')));
+    }
+
+    public function testMoreThanOnePageOfUrlsIsFetchedInOrder(): void
+    {
+        $harness = new PipelineHarness(totalParts: 40);
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', function (RequestInterface $request) use ($harness): Response {
+            parse_str($request->getUri()->getQuery(), $query);
+            $start = (int) $query['start'];
+            $urls = [];
+            for ($n = $start; $n < $start + 16 && $n <= 40; $n++) {
+                $urls[] = ['n' => $n, 'url' => PipelineHarness::url($n)];
+            }
+
+            return PipelineHarness::json(200, ['part_size_bytes' => $harness->partSize, 'total_parts' => 40, 'part_urls' => $urls, 'next_part_number' => $start + 16 <= 40 ? $start + 16 : null]);
+        });
+
+        self::go($harness);
+
+        self::assertSame(['start=17', 'start=33'], array_map(static fn (RequestInterface $request): string => $request->getUri()->getQuery(), $harness->api->to('GET', '/v1/uploads/job_1/part-urls')));
+        self::assertCount(40, $harness->parts->sent);
+        self::assertLessThanOrEqual(4, $harness->parts->maxPending);
+    }
+
+    public function testAPartThatIsRateLimitedWaitsForRetryAfter(): void
+    {
+        $harness = new PipelineHarness(totalParts: 1, script: static fn (array $request, int $index): array => [$index === 0 ? new Response(429, ['Retry-After' => '3']) : PipelineHarness::stored(), 0.0]);
+
+        self::go($harness);
+
+        self::assertContains(3.0, $harness->clock->sleeps);
+        self::assertCount(2, $harness->parts->sent);
+    }
+
+    public function testNoMoreThanConcurrencyPartsAreInFlight(): void
+    {
+        $clock = new FakeIdleClock();
+        $harness = new PipelineHarness(clock: $clock, totalParts: 7, script: static fn (): array => [PipelineHarness::stored(), 10.0]);
+        $clock->nextEvent = $harness->parts->nextRelease(...);
+
+        self::go($harness, ['concurrency' => 2]);
+
+        self::assertSame(2, $harness->parts->maxPending);
+        self::assertCount(7, $harness->parts->sent);
+    }
+
+    public function testTheHeartbeatIsNeverMoreThan120SecondsFromTheLastRequest(): void
+    {
+        $clock = new FakeIdleClock();
+        $harness = new PipelineHarness(clock: $clock, totalParts: 6, script: static fn (): array => [PipelineHarness::stored(), 50.0]);
+        $clock->nextEvent = $harness->parts->nextRelease(...);
+        /** @var list<float> $times */
+        $times = [];
+        $create = static function () use ($clock, &$times): void {
+            $times[] = $clock->time;
+        };
+        $harness->api->on('POST', '/v1/uploads', function () use ($harness, $create): Response {
+            $create();
+
+            return PipelineHarness::json(200, $harness->createBody());
+        });
+        $harness->api->on('POST', '/v1/uploads/job_1/heartbeat', function () use ($create): Response {
+            $create();
+
+            return PipelineHarness::json(200, ['ok' => true]);
+        });
+        $harness->api->on('POST', '/v1/uploads/job_1/complete', function () use ($create): Response {
+            $create();
+
+            return PipelineHarness::json(200, ['ok' => true, 'state' => 'queued']);
+        });
+
+        self::go($harness, ['concurrency' => 1]);
+
+        self::assertSame([0.0, 120.0, 240.0, 300.0, 300.0], $times);
+        self::assertGreaterThanOrEqual(4, count($times));
+        for ($index = 1; $index < count($times); $index++) {
+            self::assertLessThanOrEqual(120.0, $times[$index] - $times[$index - 1], 'gap before request '.$index);
+        }
+    }
+
+    public function testAHeartbeatThatSaysWrongStateEndsTheBeatAndTheUploadFinishes(): void
+    {
+        $clock = new FakeIdleClock();
+        $harness = new PipelineHarness(clock: $clock, script: static fn (): array => [PipelineHarness::stored(), 100.0]);
+        $clock->nextEvent = $harness->parts->nextRelease(...);
+        $harness->api->on('POST', '/v1/uploads/job_1/heartbeat', PipelineHarness::json(409, ['error' => 'wrong_state', 'code' => 4001]));
+
+        self::go($harness, ['concurrency' => 1]);
+
+        self::assertCount(1, $harness->api->to('POST', '/v1/uploads/job_1/heartbeat'), 'one ping, then the beat stopped (and no ping before complete)');
+    }
+
+    public function testARefusedTokenOnAHeartbeatAbortsTheUploadWithAuthenticationError(): void
+    {
+        $clock = new FakeIdleClock();
+        $harness = new PipelineHarness(clock: $clock, script: static fn (): array => [PipelineHarness::stored(), 150.0]);
+        $clock->nextEvent = $harness->parts->nextRelease(...);
+        $harness->api->on('POST', '/v1/uploads/job_1/heartbeat', PipelineHarness::json(401, ['error' => 'unauthorized', 'code' => 2000]));
+
+        $error = self::failure($harness, AuthenticationError::class);
+
+        self::assertNotNull($error->idempotencyKey);
+        self::assertNotNull($error->resumeToken);
+        self::assertSame([], $harness->api->to('POST', '/v1/uploads/job_1/complete'));
+        self::assertGreaterThan(0, $harness->parts->cancelled, 'requests still in flight are cancelled');
+    }
+
+    public function testAHeartbeatThatKeepsFailingDoesNotKillTheUpload(): void
+    {
+        $clock = new FakeIdleClock();
+        $harness = new PipelineHarness(clock: $clock, script: static fn (): array => [PipelineHarness::stored(), 150.0]);
+        $clock->nextEvent = $harness->parts->nextRelease(...);
+        $harness->api->on('POST', '/v1/uploads/job_1/heartbeat', PipelineHarness::json(503));
+
+        $transcript = self::go($harness, ['concurrency' => 1]);
+
+        self::assertSame('tr_1', $transcript['id']);
+    }
+
+    public function testAPartThatCannotBeReadMidUploadIsASourceReadFailureWithTheKeyAndToken(): void
+    {
+        $copy = tempnam(sys_get_temp_dir(), 'hs');
+        self::assertNotFalse($copy);
+        $this->temp[] = $copy;
+        $harness = new PipelineHarness();
+        copy($harness->path(), $copy);
+        $harness->api->on('POST', '/v1/uploads', function () use ($harness, $copy): Response {
+            file_put_contents($copy, 'cut short');
+
+            return PipelineHarness::json(200, $harness->createBody());
+        });
+
+        try {
+            $harness->pipeline->transcribe($copy, []);
+            self::fail('expected an UploadError');
+        } catch (UploadError $error) {
+            self::assertSame('source_read_failed', $error->errorCode);
+            self::assertNotNull($error->idempotencyKey);
+            self::assertNotNull($error->resumeToken);
+        }
+    }
+
+    public function testAStorageAnswerWithoutAnEtagIsEtagMissing(): void
+    {
+        $harness = new PipelineHarness(script: static fn (): array => [new Response(200), 0.0]);
+
+        $error = self::failure($harness, UploadError::class);
+
+        self::assertSame('etag_missing', $error->errorCode);
+        self::assertNotNull($error->resumeToken);
+    }
+
+    public function testAnUploadPlanWithNoUrlForAPartIsPartUrlMissing(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, self::upload($harness->createBody(), ['part_urls' => []])));
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => $harness->partSize, 'total_parts' => 3, 'part_urls' => [], 'next_part_number' => null]));
+
+        $error = self::failure($harness, UploadError::class);
+
+        self::assertSame('part_url_missing', $error->errorCode);
+    }
+
+    public function testAPlanThatDoesNotMatchTheFileIsABadPartPlan(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, self::upload($harness->createBody(), ['total_parts' => 4])));
+
+        $error = self::failure($harness, UploadError::class);
+
+        self::assertSame('bad_part_plan', $error->errorCode);
+        self::assertNotNull($error->idempotencyKey);
+        self::assertNotNull($error->resumeToken);
+    }
+
+    /** @return iterable<string, array{\Closure(array<mixed>): array<mixed>}> */
+    public static function unusableCreates(): iterable
+    {
+        yield 'part size zero' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => 0])];
+        yield 'part size negative' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => -5])];
+        yield 'part size fractional' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => 1.5])];
+        yield 'part size a string' => [static fn (array $b): array => self::upload($b, ['part_size_bytes' => '8'])];
+        yield 'total parts zero' => [static fn (array $b): array => self::upload($b, ['total_parts' => 0])];
+        yield 'total parts missing' => [static fn (array $b): array => [...$b, 'upload' => ['part_size_bytes' => 5, 'part_urls' => []]]];
+        yield 'part number zero' => [static fn (array $b): array => self::upload($b, ['part_urls' => [['n' => 0, 'url' => 'https://x.example/1']]])];
+        yield 'part number fractional' => [static fn (array $b): array => self::upload($b, ['part_urls' => [['n' => 1.5, 'url' => 'https://x.example/1']]])];
+        yield 'empty url' => [static fn (array $b): array => self::upload($b, ['part_urls' => [['n' => 1, 'url' => '']]])];
+        yield 'next part negative' => [static fn (array $b): array => self::upload($b, ['next_part_number' => -1])];
+        yield 'upload a list' => [static fn (array $b): array => [...$b, 'upload' => [1, 2]]];
+        yield 'upload empty' => [static fn (array $b): array => [...$b, 'upload' => []]];
+        yield 'no job id' => [static fn (array $b): array => ['state' => 'uploading', 'upload' => $b['upload']]];
+        yield 'dot job id' => [static fn (array $b): array => [...$b, 'job_id' => '..']];
+    }
+
+    /**
+     * @param  \Closure(array<mixed>): array<mixed>  $break
+     */
+    #[DataProvider('unusableCreates')]
+    public function testAnUnusableCreateAnswerIsABadResponseThatCarriesTheKey(\Closure $break): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, $break($harness->createBody())));
+
+        $error = self::failure($harness, ApiError::class);
+
+        self::assertSame('bad_response', $error->errorCode);
+        self::assertSame(200, $error->status);
+        self::assertNull($error->numericCode);
+        self::assertNotNull($error->idempotencyKey);
+        self::assertSame([], $harness->parts->sent);
+    }
+
+    public function testAnEmptyCreateBodyIsABadResponse(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('POST', '/v1/uploads', new Response(200));
+
+        self::assertSame('bad_response', self::failure($harness, ApiError::class)->errorCode);
+    }
+
+    public function testADoneJobWithoutATranscriptCarriesTheKeyAndToken(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('GET', '/v1/jobs/job_1', PipelineHarness::json(200, ['id' => 'job_1', 'state' => 'done']));
+
+        $error = self::failure($harness, UploadError::class);
+
+        self::assertSame('transcript_missing', $error->errorCode);
+        self::assertNotNull($error->idempotencyKey);
+        self::assertNotNull($error->resumeToken);
+    }
+
+    public function testAFailedJobRaisesJobFailedError(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('GET', '/v1/jobs/job_1', PipelineHarness::json(200, ['id' => 'job_1', 'state' => 'failed', 'error' => 'undecodable', 'failure_kind' => 'media_undecodable']));
+
+        $error = self::failure($harness, JobFailedError::class);
+
+        self::assertInstanceOf(JobFailedError::class, $error);
+        self::assertSame('media_undecodable', $error->failureKind);
+        self::assertNotNull($error->resumeToken);
+    }
+
+    public function testAJobThatOutlastsTheWaitTimeoutRaisesWaitTimeoutWithTheToken(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('GET', '/v1/jobs/job_1', PipelineHarness::json(200, ['id' => 'job_1', 'state' => 'processing']));
+
+        try {
+            self::go($harness, ['wait_timeout' => 30]);
+            self::fail('expected a WaitTimeoutError');
+        } catch (WaitTimeoutError $error) {
+            self::assertNotNull($error->resumeToken);
+            self::assertSame(Resume::decode($error->resumeToken)->jobId, 'job_1');
+        }
+    }
+
+    public function testACompleteThatReportsLostBytesIsAnUploadError(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('POST', '/v1/uploads/job_1/complete', PipelineHarness::json(409, ['error' => 'upload_incomplete', 'code' => 1041]));
+
+        $error = self::failure($harness, UploadError::class);
+
+        self::assertSame('upload_incomplete', $error->errorCode);
+        self::assertNotNull($error->resumeToken);
+    }
+
+    public function testAServerRefusalOfTheCreateCarriesTheKeyButNoToken(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(402, ['error' => 'insufficient_balance', 'code' => 3001, 'needed_seconds' => 21, 'balance_seconds' => 5]));
+
+        $error = self::failure($harness, InsufficientBalanceError::class);
+
+        self::assertNotNull($error->idempotencyKey);
+        self::assertNull($error->resumeToken);
+        self::assertSame(21, $error->details['needed_seconds']);
+    }
+
+    public function testACreateThatIsLostInTheNetworkIsRetriedWithTheSameKey(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('POST', '/v1/uploads', [
+            new \GuzzleHttp\Exception\RequestException('lost', new \GuzzleHttp\Psr7\Request('POST', PipelineHarness::BASE.'/v1/uploads'), null, null, ['errno' => 56]),
+            PipelineHarness::json(200, $harness->createBody()),
+        ]);
+
+        self::go($harness);
+
+        $keys = array_map(static function (RequestInterface $request): mixed {
+            $body = json_decode((string) $request->getBody(), true);
+
+            return is_array($body) ? $body['idempotency_key'] ?? null : null;
+        }, $harness->api->to('POST', '/v1/uploads'));
+        self::assertCount(2, $keys);
+        self::assertSame($keys[0], $keys[1]);
+    }
+
+    public function testEveryCreateAttemptTakesAPacingToken(): void
+    {
+        $harness = new PipelineHarness(maxRetries: 5);
+        $times = [];
+        $harness->api->on('POST', '/v1/uploads', function () use ($harness, &$times): Response {
+            $times[] = $harness->clock->time;
+
+            return count($times) < 5 ? PipelineHarness::json(503) : PipelineHarness::json(200, $harness->createBody());
+        });
+
+        self::go($harness);
+
+        self::assertCount(5, $times);
+        self::assertGreaterThanOrEqual(60.0, $times[4] - $times[0], 'the fifth create waited out the 4-per-minute window');
+    }
+
+    public function testPreflightFailuresMakeNoRequest(): void
+    {
+        foreach ([
+            ['short-10s.mp3', [], FileLimitError::class, 'duration_out_of_range'],
+            ['webm-renamed.mp3', [], UnsupportedMediaError::class, 'unsupported_media'],
+            ['cbr-20s.mp3', ['concurrency' => 99], PreflightError::class, 'invalid_option'],
+            ['cbr-20s.mp3', ['duration_seconds' => NAN], PreflightError::class, 'invalid_option'],
+            ['cbr-20s.mp3', ['duration_seconds' => 5], FileLimitError::class, 'duration_out_of_range'],
+        ] as [$file, $options, $class, $code]) {
+            $harness = new PipelineHarness(file: $file);
+            try {
+                self::go($harness, $options);
+                self::fail('expected '.$class);
+            } catch (HushscriptException $error) {
+                self::assertInstanceOf($class, $error);
+                self::assertSame($code, $error->errorCode);
+                self::assertNull($error->idempotencyKey, 'nothing was sent, so there is no key');
+            }
+            self::assertSame([], $harness->api->requests, $file);
+            self::assertSame([], $harness->parts->sent);
+        }
+    }
+
+    public function testAMissingFileIsRefusedBeforeAnyRequest(): void
+    {
+        $harness = new PipelineHarness();
+
+        try {
+            $harness->pipeline->transcribe('/nonexistent/file.mp3', []);
+            self::fail('expected a PreflightError');
+        } catch (PreflightError $error) {
+            self::assertSame('file_unreadable', $error->errorCode);
+        }
+        self::assertSame([], $harness->api->requests);
+    }
+
+    public function testAnEstimateOverTheBalanceIsRefusedBeforeTheCreate(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('GET', '/v1/account', PipelineHarness::json(200, ['balance_seconds' => 10, 'held_seconds' => 4]));
+
+        $error = self::failure($harness, InsufficientBalanceError::class);
+
+        self::assertSame(['needed_seconds' => 21, 'balance_seconds' => 10, 'held_seconds' => 4], $error->details);
+        self::assertNull($error->status);
+        self::assertSame(['GET /v1/account'], $harness->api->lines());
+    }
+
+    public function testTheEstimateCountsMedicalAndTranslation(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('GET', '/v1/account', PipelineHarness::json(200, ['balance_seconds' => 30]));
+
+        try {
+            self::go($harness, ['medical' => true, 'language' => 'en']);
+            self::fail('expected an InsufficientBalanceError');
+        } catch (InsufficientBalanceError $error) {
+            self::assertSame(42, $error->details['needed_seconds']);
+        }
+    }
+
+    public function testAnUploadThatWouldPassTheDailyLimitIsRefused(): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('GET', '/v1/account', PipelineHarness::json(200, ['balance_seconds' => 36000, 'limits' => ['max_daily_seconds' => 100, 'used_today_seconds' => 90]]));
+
+        $error = self::failure($harness, DailyLimitError::class);
+
+        self::assertSame('daily_limit', $error->errorCode);
+        self::assertSame(['GET /v1/account'], $harness->api->lines());
+    }
+
+    public function testNoSignedUrlOrTokenSurfacesAnywhere(): void
+    {
+        $harness = new PipelineHarness(script: static fn (): array => [PartFailure::of(new \RuntimeException('cURL error 28 for '.PipelineHarness::url(1))), 0.0]);
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => [['n' => 1, 'url' => PipelineHarness::url(1, '&fresh=1')], ['n' => 2, 'url' => PipelineHarness::url(2, '&fresh=1')], ['n' => 3, 'url' => PipelineHarness::url(3, '&fresh=1')]], 'next_part_number' => null]));
+
+        try {
+            self::go($harness);
+            self::fail('expected parts_exhausted or a fallback failure');
+        } catch (HushscriptException $error) {
+            $surface = implode("\n", [$error->getMessage(), (string) $error->hint, var_export($error->details, true)]);
+            for ($link = $error; $link !== null; $link = $link->getPrevious()) {
+                $surface .= "\n".$link->getMessage()."\n".$link->getTraceAsString()."\n".self::traceStrings($link->getTrace());
+            }
+            self::assertStringNotContainsString('X-Amz-Signature', $surface);
+            self::assertStringNotContainsString('SECRET', $surface);
+            self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, $surface);
+        }
+        $logs = implode("\n", $harness->logLines);
+        self::assertStringContainsString('r2:part/1', $logs);
+        self::assertStringNotContainsString('X-Amz-Signature', $logs);
+        self::assertStringNotContainsString('SECRET', $logs);
+        self::assertStringNotContainsString('r2.example.com', $logs);
+        self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, $logs);
+    }
+
+    public function testAFailingProxiedPartRaisesTheApiErrorItself(): void
+    {
+        $harness = new PipelineHarness(script: static fn (): array => [new Response(401, [], '{"error":"unauthorized","code":2000}'), 0.0]);
+        $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, $harness->createBody(proxied: true)));
+
+        $error = self::failure($harness, AuthenticationError::class);
+
+        self::assertSame(401, $error->status);
+        self::assertCount(1, $harness->parts->sent, 'a 401 is not retried');
+    }
+
+    public function testAProxiedPartThatKeepsFailingInTransitIsANetworkErrorAfterTheRetries(): void
+    {
+        $harness = new PipelineHarness(script: static fn (): array => [PartFailure::of(new \RuntimeException('connection reset')), 0.0]);
+        $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, $harness->createBody(proxied: true)));
+
+        $error = self::failure($harness, NetworkError::class);
+
+        self::assertCount(4, $harness->parts->sent);
+        self::assertStringContainsString('PUT /v1/uploads/job_1/parts/1', $error->getMessage());
+    }
+
+    public function testARateLimitedProxiedPartWithALongRetryAfterRaisesAtOnce(): void
+    {
+        $harness = new PipelineHarness(script: static fn (): array => [new Response(429, ['Retry-After' => '61'], '{"error":"rate_limited","code":5000}'), 0.0]);
+        $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, $harness->createBody(proxied: true)));
+
+        $error = self::failure($harness, RateLimitError::class);
+
+        self::assertSame(61, $error->retryAfter);
+        self::assertCount(1, $harness->parts->sent);
+    }
+
+    public function testAFatalPartCancelsTheRequestsStillInFlight(): void
+    {
+        $clock = new FakeIdleClock();
+        $harness = new PipelineHarness(clock: $clock, script: static fn (array $request): array => self::partNumber($request['url']) === 1 ? [new Response(200), 0.0] : [PipelineHarness::stored(), 500.0]);
+        $clock->nextEvent = $harness->parts->nextRelease(...);
+
+        self::failure($harness, UploadError::class);
+
+        self::assertSame(2, $harness->parts->cancelled);
+    }
+
+    public function testTheMemoryBoundIsOnePartPerSlot(): void
+    {
+        $clock = new FakeIdleClock();
+        $harness = new PipelineHarness(clock: $clock, totalParts: 12, script: static fn (): array => [PipelineHarness::stored(), 5.0]);
+        $clock->nextEvent = $harness->parts->nextRelease(...);
+
+        self::go($harness, ['concurrency' => 3]);
+
+        self::assertSame(3, $harness->parts->maxPending);
+    }
+}

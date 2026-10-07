@@ -29,6 +29,14 @@ final class Log
         };
     }
 
+    /** A fixed line about the SDK itself; it never carries a request, URL or body. */
+    public function note(string $message): void
+    {
+        if ($this->enabled) {
+            ($this->sink)(Redact::text('hushscript '.$message));
+        }
+    }
+
     public function attempt(string $method, string $path, ?int $status, int $attempt, float $durationMs, ?float $retryDelay): void
     {
         if (! $this->enabled) {

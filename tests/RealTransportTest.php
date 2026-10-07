@@ -97,6 +97,57 @@ final class RealTransportTest extends TestCase
         }
     }
 
+    /** The port of a loopback address nobody listens on. */
+    private static function deadPort(): int
+    {
+        $listener = stream_socket_server('tcp://127.0.0.1:0');
+        self::assertNotFalse($listener);
+        $port = (int) explode(':', (string) stream_socket_get_name($listener, false))[1];
+        fclose($listener);
+
+        return $port;
+    }
+
+    public function testTheClientsOwnCurlDefaultsSurviveOnARequestThatNeedsAFreshConnection(): void
+    {
+        // The request-level 'curl' option replaces the client's defaults, so a CONNECT_TO rule
+        // that sends the base URL's dead port to the live server is lost unless it is merged in.
+        $server = $this->server = ScriptedServer::start();
+        $dead = self::deadPort();
+        $guzzle = new GuzzleClient([
+            'allow_redirects' => false,
+            'http_errors' => false,
+            'curl' => [CURLOPT_CONNECT_TO => ["127.0.0.1:{$dead}:127.0.0.1:{$server->port}"], CURLOPT_FRESH_CONNECT => false],
+        ]);
+        $client = new Client(Tokens::TEST, ['base_url' => 'http://127.0.0.1:'.$dead, 'http_client' => $guzzle, 'clock' => new FakeClock(), 'timeout' => 10]);
+
+        self::assertSame(['ok' => true], $client->api()->request('POST', self::CLAIM, body: ['claim_secret' => 'cs_0123456789abcdef']));
+
+        $requests = $server->stop();
+        $this->server = null;
+        self::assertSame(['POST '.self::CLAIM], $requests);
+    }
+
+    public function testTheMergedCurlOptionsKeepTheClientsDefaultsAndForceTheFreshConnection(): void
+    {
+        /** @var list<array<string, mixed>> $seen */
+        $seen = [];
+        $stack = HandlerStack::create(new MockHandler([static fn (RequestInterface $request, array $options): Response => new Response(200, [], '{}')]));
+        $stack->push(static function (callable $next) use (&$seen): callable {
+            return static function (RequestInterface $request, array $options) use ($next, &$seen) {
+                $seen[] = $options;
+
+                return $next($request, $options);
+            };
+        });
+        $guzzle = new GuzzleClient(['handler' => $stack, 'curl' => [CURLOPT_CONNECT_TO => ['a:1:b:2'], CURLOPT_FRESH_CONNECT => false, CURLOPT_FORBID_REUSE => false]]);
+        $rig = new Rig(new Support\FakeHttp(), inner: $guzzle);
+
+        $rig->api->request('POST', self::CLAIM, body: ['claim_secret' => 'x']);
+
+        self::assertSame([CURLOPT_CONNECT_TO => ['a:1:b:2'], CURLOPT_FRESH_CONNECT => true, CURLOPT_FORBID_REUSE => true], $seen[0]['curl'] ?? null);
+    }
+
     /** @return iterable<string, array{string, string, array<string, mixed>, bool}> */
     public static function routesAndConnections(): iterable
     {
