@@ -345,8 +345,8 @@ An explicit option beats its environment variable. The base URL must be `https:/
 
 A custom `http_client` must not follow redirects and must return 4xx and 5xx answers as responses.
 The SDK still adds the retry and authorization rules around it, and sends the token only to the
-configured API origin. If the client has a `withOptions()` method (Symfony's HttpClient does), the SDK
-calls `withOptions(['max_redirects' => 0])` on it; any other client must be configured that way by you.
+configured API origin. If the client has a `withOptions()` method, the SDK calls
+`withOptions(['max_redirects' => 0])` on it; any other client must be configured that way by you.
 
 Requests that must never be replayed (account claim, credential rotation, signup, unkeyed creates,
 purchases and every other mutation) have to go out over a fresh connection. libcurl otherwise replays
@@ -354,7 +354,10 @@ a request on a kept-alive connection that the server closed after the body was s
 see it twice. With the default Guzzle client, and with any `GuzzleHttp\ClientInterface` you pass, the
 SDK requests a fresh, non-reusable connection for those calls. A custom PSR-18 client that is not a
 Guzzle client must itself never retry or replay a request on a reused connection, or must open a new
-connection per request; the SDK cannot enforce this on a foreign client.
+connection per request; the SDK cannot enforce this on a foreign client. Symfony HttpClient does not
+meet this rule: it cannot open a fresh connection per non-replayable request, and libcurl can resend
+a POST on a pooled connection that died. Guzzle is the supported transport for `buy`, claim, rotate,
+signup and an unkeyed create.
 
 ## Laravel
 
