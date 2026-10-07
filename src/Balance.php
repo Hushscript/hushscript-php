@@ -23,6 +23,16 @@ final readonly class Balance
     ) {
     }
 
+    /**
+     * The balance a claim reports: the pack just granted. A new account holds nothing and has no expiry in the answer.
+     *
+     * @internal
+     */
+    public static function granted(int $seconds): self
+    {
+        return new self($seconds, intdiv($seconds, 60), 0, null, null);
+    }
+
     /** @internal */
     public static function fromApi(#[\SensitiveParameter] Body $account): self
     {
