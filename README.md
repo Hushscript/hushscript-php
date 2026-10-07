@@ -68,11 +68,13 @@ PHP has no background threads. The upload loop owns the heartbeat (a ping at lea
 parts are in flight) and runs part requests on its own cURL multi handle, so a part that stalls for
 minutes does not stop the heartbeat. With your own `http_client`, parts go through it one at a time
 (no `Authorization` header is added to signed part URLs) and the heartbeat runs before every part,
-early when the longest part so far could outlast the interval. The gap is bounded by one part's
-duration, which is at most the 300 s part timeout: the first part, or a part slower than the ones
-before it, can leave a gap longer than 120 s. The `part_transport` option (an instance
-of `Hushscript\Transcribe\PartTransport`) replaces how parts are sent; a clock that also implements
-`Hushscript\IdleClock` lets tests move time while requests are in flight.
+early when the latest part could outlast the interval. While a part request blocks, nothing else
+runs, so the true bound between two pings is about 120 s plus one part's duration, which is at most the
+300 s part timeout. The SDK passes that timeout to a Guzzle client; any other PSR-18 client has to
+enforce its own timeout, or one stalled part holds the whole upload and its heartbeat. The
+`part_transport` option (an instance of `Hushscript\Transcribe\PartTransport`) replaces how parts are
+sent; a clock that also implements `Hushscript\IdleClock` lets tests move time while requests are in
+flight.
 
 ## Configuration
 

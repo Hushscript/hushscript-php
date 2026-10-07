@@ -119,4 +119,19 @@ final class PartTransportTest extends TestCase
     {
         self::assertTrue(GuzzleMultiTransport::available());
     }
+
+    public function testTheSyncTransportHandsThePartTimeoutToAGuzzleClient(): void
+    {
+        $seen = [];
+        $client = new GuzzleClient(['handler' => static function (\Psr\Http\Message\RequestInterface $request, array $options) use (&$seen): PromiseInterface {
+            $seen = $options;
+
+            return \GuzzleHttp\Promise\Create::promiseFor(new \GuzzleHttp\Psr7\Response(200));
+        }]);
+
+        (new SyncTransport($client))->send(new Request('PUT', 'http://127.0.0.1:1/part'), 300.0);
+
+        self::assertSame(300.0, $seen['timeout'] ?? null);
+        self::assertFalse($seen['allow_redirects'] ?? true);
+    }
 }
