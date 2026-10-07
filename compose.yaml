@@ -96,16 +96,7 @@ services:
 
   examples:
     <<: *sandboxed
-    command:
-      - sh
-      - -c
-      - >-
-        found=0;
-        for f in examples/*.php; do
-        [ -e "$$f" ] || continue; found=1;
-        timeout 600 php "$$f" || exit 1;
-        done;
-        [ "$$found" = 1 ] || echo "no examples yet"
+    command: ["timeout", "900", "php", "scripts/run-examples.php"]
 
   # Outbound network: asks the advisory database about the locked set.
   audit:

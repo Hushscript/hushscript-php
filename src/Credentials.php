@@ -18,6 +18,9 @@ final class Credentials
     /** @var \WeakMap<self, list<string>>|null */
     private static ?\WeakMap $tokens = null;
 
+    /** @var \WeakMap<self, list<string>>|null tokens a client never sends: scrubbed from every text all the same */
+    private static ?\WeakMap $known = null;
+
     public function __construct(#[\SensitiveParameter] string $token)
     {
         self::$tokens ??= new \WeakMap();
@@ -37,10 +40,20 @@ final class Credentials
         self::$tokens[$this] = [...(self::$tokens[$this] ?? []), $token];
     }
 
-    /** Removes the current token, the replaced ones and anything shaped like a token from the text. */
+    /** Scrubs a token from every text from now on without making it the one the client sends. */
+    public function remember(#[\SensitiveParameter] string $token): void
+    {
+        self::$known ??= new \WeakMap();
+        $known = self::$known[$this] ?? [];
+        if ($token !== '' && ! in_array($token, $known, true)) {
+            self::$known[$this] = [...$known, $token];
+        }
+    }
+
+    /** Removes the current token, the replaced ones, the remembered ones and anything shaped like a token from the text. */
     public function scrub(#[\SensitiveParameter] string $text): string
     {
-        foreach (self::$tokens[$this] ?? [] as $token) {
+        foreach ([...(self::$tokens[$this] ?? []), ...(self::$known[$this] ?? [])] as $token) {
             if ($token === '') {
                 continue;
             }

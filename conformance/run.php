@@ -5,9 +5,9 @@ declare(strict_types=1);
 /*
  * Runs the conformance scenarios against the mock (the conformance repo's runner contract).
  *
- * Only the ops in OPS are mapped so far (the friendly layer's reads; billing and agent come later). A scenario that needs any other op is reported as SKIP and
- * does not fail the run; CONFORMANCE_STRICT=1 turns every skip into a failure, which is what the
- * contract asks for once the friendly layer is complete.
+ * Every op of the runner contract is mapped (OPS). A scenario that needs an op that is not is reported as SKIP and
+ * does not fail the run; CONFORMANCE_STRICT=1 turns every skip into a failure, which is what the contract asks for
+ * and what `just ci` sets.
  *
  * PHP is single-threaded, so the contract's concurrent driver is folded into the injected clock. It
  * does two things. When the SDK sleeps (its own waits: backoff, pacing, polling) the clock advances
@@ -273,6 +273,42 @@ function balance(Client $hs): array
     ];
 }
 
+/**
+ * @param  array<mixed>  $args
+ * @return array<string, mixed>
+ */
+function buy(Client $hs, array $args): array
+{
+    $purchase = $hs->buy(is_string($args['pack'] ?? null) ? $args['pack'] : '');
+
+    return ['seconds' => $purchase->seconds, 'minutes' => $purchase->minutes];
+}
+
+/**
+ * The static claim needs no client; it runs on the scenario's virtual clock.
+ *
+ * @param  array<mixed>  $args
+ * @return array<string, mixed>
+ */
+function claim(array $args, VirtualClock $clock): array
+{
+    $account = Client::agentClaim(
+        is_string($args['signupId'] ?? null) ? $args['signupId'] : '',
+        is_string($args['claimSecret'] ?? null) ? $args['claimSecret'] : '',
+        ['base_url' => BASE_URL, 'clock' => $clock],
+    );
+
+    return ['token' => $account->token, 'userId' => $account->userId, 'scopes' => $account->scopes, 'seconds' => $account->balance->seconds];
+}
+
+/** @return array<string, mixed> */
+function rotate(Client $hs): array
+{
+    $rotated = $hs->agent()->rotateToken();
+
+    return ['token' => $rotated->token, 'tokenId' => $rotated->tokenId, 'scopes' => $rotated->scopes];
+}
+
 /** Fixture files fetched from the mock into a scratch directory, once each. */
 final class Files
 {
@@ -421,19 +457,22 @@ function probe(array $args, Files $files): array
     return ['checked' => count($files->durations) - count($refuse), 'refused' => $refused, 'failures' => $failures];
 }
 
-const OPS = ['balance', 'transcribe', 'resume', 'probe', 'format', 'listTranscripts', 'getTranscript'];
+const OPS = ['balance', 'buy', 'claim', 'rotate', 'transcribe', 'resume', 'probe', 'format', 'listTranscripts', 'getTranscript'];
 
 /**
  * @param  array<mixed>  $step
  * @return array<string, mixed>
  */
-function perform(Client $hs, Mock $mock, array $step, Files $files, ?string $token): array
+function perform(Client $hs, Mock $mock, array $step, Files $files, ?string $token, VirtualClock $clock): array
 {
     $args = is_array($step['args'] ?? null) ? $step['args'] : [];
     $file = is_string($args['file'] ?? null) ? $files->path($args['file']) : '';
 
     return match ($step['op'] ?? null) {
         'balance' => balance($hs),
+        'buy' => buy($hs, $args),
+        'claim' => claim($args, $clock),
+        'rotate' => rotate($hs),
         'transcribe' => transcriptResult($hs->transcribe($file, options($args))),
         'resume' => transcriptResult($hs->resume($token ?? '', $file, options($args))),
         'probe' => probe($args, $files),
@@ -480,7 +519,7 @@ function runScenario(Mock $mock, string $name, string $scratch): array
         $prior = $call['prior'] ?? null;
         if (is_array($prior)) {
             try {
-                perform($hs, $mock, $prior, $files, null);
+                perform($hs, $mock, $prior, $files, null, $clock);
                 $problems[] = 'the prior call returned; it should have failed';
             } catch (\Throwable $error) {
                 $wanted = is_array($prior['expectError'] ?? null) ? $prior['expectError'] : [];
@@ -489,7 +528,7 @@ function runScenario(Mock $mock, string $name, string $scratch): array
             }
         }
         $mock->post('/__mark');
-        $result = perform($hs, $mock, $call, $files, $token);
+        $result = perform($hs, $mock, $call, $files, $token, $clock);
         if (isset($expect['error'])) {
             $problems[] = 'expected an error, the call returned';
         } elseif (isset($expect['result']) && is_array($expect['result'])) {

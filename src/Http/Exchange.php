@@ -9,6 +9,7 @@ use Hushscript\Credentials;
 use Hushscript\Exception\ApiError;
 use Hushscript\Exception\ErrorMapper;
 use Hushscript\Exception\HushscriptException;
+use Hushscript\Exception\OutcomeUnknownError;
 use Hushscript\Exception\PreflightError;
 use Hushscript\Redact;
 use Psr\Http\Client\ClientInterface;
@@ -106,6 +107,39 @@ final class Exchange
      */
     private function exchange(string $method, #[\SensitiveParameter] string $path, #[\SensitiveParameter] array $query, #[\SensitiveParameter] ?array $body, bool $nullable, int &$answered = 0): ?array
     {
+        [$status, $content] = $this->send($method, $path, $query, $body);
+        $answered = $status;
+        if (trim($content) === '') {
+            return [];
+        }
+        try {
+            $decoded = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            throw self::badResponse($status);
+        }
+        if ($decoded === null && $nullable) {
+            return null;
+        }
+        if (! is_array($decoded)) {
+            throw self::badResponse($status);
+        }
+
+        return $decoded;
+    }
+
+    /**
+     * Sends one request and returns the 2xx status with the body text, undecoded. Every failure up to here is an
+     * SDK error: a non-2xx answer is its mapped error, and a failure of the SDK's own after the request went out is
+     * `unexpected_error`, or `OutcomeUnknownError` on a route whose answer cannot be had again (spec 7.4).
+     *
+     * @param  array<string, scalar|list<scalar>|null>  $query
+     * @param  array<mixed>|null  $body
+     * @return array{int, string}
+     *
+     * @throws HushscriptException
+     */
+    public function send(string $method, #[\SensitiveParameter] string $path, #[\SensitiveParameter] array $query = [], #[\SensitiveParameter] ?array $body = null): array
+    {
         $method = strtoupper($method);
         if (! in_array($method, self::METHODS, true)) {
             throw new PreflightError('Unsupported HTTP method "'.Redact::text($method).'".', 'invalid_option');
@@ -125,32 +159,30 @@ final class Exchange
         try {
             $response = $this->http->sendRequest($request);
             $status = $response->getStatusCode();
-            $answered = $status;
             if ($status < 200 || $status >= 300) {
                 throw ErrorMapper::fromResponse($response, $this->credentials, $method, $path);
             }
-            $content = (string) $response->getBody();
+
+            return [$status, (string) $response->getBody()];
         } catch (HushscriptException $failure) {
             throw $failure;
         } catch (\Throwable $failure) {
+            $route = Routes::unrecoverable($method, $path);
+            if ($route !== null) {
+                throw $this->lost($route, $failure);
+            }
             throw $this->unexpected($failure);
         }
-        if (trim($content) === '') {
-            return [];
-        }
-        try {
-            $decoded = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
-        } catch (\JsonException) {
-            throw self::badResponse($status);
-        }
-        if ($decoded === null && $nullable) {
-            return null;
-        }
-        if (! is_array($decoded)) {
-            throw self::badResponse($status);
-        }
+    }
 
-        return $decoded;
+    /** A failure of the SDK's own after a claim, rotation or signup went out: as lost as an answer that never came. */
+    private function lost(string $route, #[\SensitiveParameter] \Throwable $failure): OutcomeUnknownError
+    {
+        return new OutcomeUnknownError(
+            'The answer could not be used, so its outcome is unknown.',
+            hint: Routes::UNKNOWN_HINTS[$route] ?? '',
+            previous: new \RuntimeException($this->credentials->scrub($failure::class.': '.$failure->getMessage())),
+        );
     }
 
     /** A failure of the SDK's own after the request was sent: the original is kept as a redacted cause. */

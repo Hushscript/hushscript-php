@@ -10,6 +10,7 @@ return (new Configuration())
     ->addPathToScan(__DIR__.'/tests', true)
     ->addPathToScan(__DIR__.'/scripts', true)
     ->addPathToScan(__DIR__.'/conformance', true)
+    ->addPathToScan(__DIR__.'/examples', true)
     ->addPathToScan(__DIR__.'/smoke', true)
     // The Override attribute is a PHP 8.3 builtin; on 8.2 it is an ignored unknown attribute class.
     ->ignoreUnknownClasses(['Override'])

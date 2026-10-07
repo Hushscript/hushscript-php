@@ -38,13 +38,6 @@ final class RetryMiddleware implements ClientInterface
 
     private const CURLOPT_FORBID_REUSE = 75;
 
-    private const UNKNOWN_HINTS = [
-        Routes::CLAIM => 'The claim may have succeeded. Retrying will fail with agent_claim_invalid. '
-            .'If you have no token, contact support with the signup id.',
-        Routes::ROTATE => 'The old token may already be revoked. Try a request with it; if it fails, '
-            .'the new token was lost and the account needs support.',
-    ];
-
     private readonly string $baseScheme;
 
     private readonly string $baseHost;
@@ -160,8 +153,10 @@ final class RetryMiddleware implements ClientInterface
     {
         $outgoing = $request->withHeader('User-Agent', 'hushscript-php/'.Version::SDK.' php/'.PHP_VERSION);
         // Read per attempt, after any sleep: a rotation applies to retries already queued (spec 7.4).
-        $outgoing = $onBase
-            ? $outgoing->withHeader('Authorization', 'Bearer '.$this->credentials->token())
+        // A call that needs no token (agent signup and claim) has none to send.
+        $token = $this->credentials->token();
+        $outgoing = $onBase && $token !== ''
+            ? $outgoing->withHeader('Authorization', 'Bearer '.$token)
             : $outgoing->withoutHeader('Authorization');
         $body = $outgoing->getBody();
         if ($body->isSeekable()) {
@@ -242,7 +237,7 @@ final class RetryMiddleware implements ClientInterface
             return new OutcomeUnknownError(
                 "No response arrived for {$where}.",
                 'outcome_unknown',
-                hint: self::UNKNOWN_HINTS[$route ?? ''] ?? '',
+                hint: Routes::UNKNOWN_HINTS[$route ?? ''] ?? '',
                 previous: $cause,
             );
         }

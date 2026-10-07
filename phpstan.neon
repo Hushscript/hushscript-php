@@ -12,5 +12,6 @@ parameters:
         - tests
         - scripts
         - conformance
+        - examples
         - smoke
         - composer-dependency-analyser.php
