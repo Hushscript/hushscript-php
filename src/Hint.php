@@ -89,6 +89,11 @@ final class Hint
             return (string) $value;
         }
         if (is_float($value)) {
+            // NaN and infinity have no count to show.
+            if (! is_finite($value)) {
+                return '';
+            }
+
             return floor($value) === $value && abs($value) < 1e15 ? (string) (int) $value : (string) $value;
         }
         if (is_array($value)) {
@@ -128,6 +133,10 @@ final class Hint
     {
         $seconds = $retryAfter ?? self::number($fromDetails);
 
-        return $seconds === null ? null : (string) (int) ceil($seconds);
+        if ($seconds === null) {
+            return null;
+        }
+
+        return is_int($seconds) ? (string) $seconds : (string) (int) ceil($seconds);
     }
 }

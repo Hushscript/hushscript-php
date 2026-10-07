@@ -10,12 +10,12 @@ namespace Hushscript\Transcribe;
  */
 final class Callbacks
 {
-    /** @var \SplObjectStorage<\Throwable, true> */
-    private \SplObjectStorage $raised;
+    /** @var \WeakMap<\Throwable, true> */
+    private \WeakMap $raised;
 
     public function __construct()
     {
-        $this->raised = new \SplObjectStorage();
+        $this->raised = new \WeakMap();
     }
 
     /**
@@ -29,7 +29,7 @@ final class Callbacks
         try {
             $callback($argument);
         } catch (\Throwable $failure) {
-            $this->raised->attach($failure, true);
+            $this->raised[$failure] = true;
 
             throw $failure;
         }
@@ -37,6 +37,6 @@ final class Callbacks
 
     public function raised(#[\SensitiveParameter] \Throwable $failure): bool
     {
-        return $this->raised->contains($failure);
+        return isset($this->raised[$failure]);
     }
 }
