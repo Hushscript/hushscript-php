@@ -3,3 +3,5 @@ extend-exclude = ["openapi.json", "go.mod", "go.sum", "generated/**", "LICENSE"]
 
 [default.extend-words]
 JOD = "JOD"
+# PHP's own function name, stream_bucket_make_writeable
+writeable = "writeable"

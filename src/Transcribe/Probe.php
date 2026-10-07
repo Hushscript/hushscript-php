@@ -31,20 +31,23 @@ final class Probe
      */
     public static function seconds(Source $source): float
     {
+        if ($source->sequential) {
+            throw self::unreadable('the input is a stream that cannot seek');
+        }
         $format = Sniff::format($source->head());
         $found = [];
-        $declared = self::container($source->path);
+        $declared = self::container($source);
         if ($declared !== null) {
             $found[] = $declared;
         }
         if ($format === Sniff::MP3) {
-            $scanned = self::scanMp3($source->path);
+            $scanned = self::scanMp3($source);
             if ($scanned !== null) {
                 $found[] = $scanned;
             }
         }
         if ($format === Sniff::OGG) {
-            $opus = self::opusSeconds($source->path);
+            $opus = self::opusSeconds($source);
             if ($opus !== null) {
                 // The granule position replaces getID3's figure, which leaves the pre-skip out.
                 $found = [$opus];
@@ -63,7 +66,7 @@ final class Probe
         return new UnsupportedMediaError('Could not read the duration ('.$reason.'); pass duration_seconds.', 'duration_unreadable');
     }
 
-    private static function container(string $path): ?float
+    private static function container(Source $source): ?float
     {
         $reader = new \getID3();
         $reader->option_tag_id3v1 = false;
@@ -76,13 +79,21 @@ final class Probe
         $reader->option_save_attachments = false;
         $reader->option_md5_data = false;
         // getID3 predates current PHP and may raise notices or deprecations on odd files; none of them is the caller's.
+        // A stream is read through a window that closing leaves open: getID3 closes what it is given.
+        $window = $source->path === null ? $source->probeHandle() : null;
+        if ($source->path === null && $window === null) {
+            return null;
+        }
         set_error_handler(static fn (): bool => true);
         try {
-            $info = $reader->analyze($path);
+            $info = $source->path === null ? $reader->analyze('stream', $source->size, '', $window) : $reader->analyze($source->path);
         } catch (\Throwable) {
             return null;
         } finally {
             restore_error_handler();
+            if (is_resource($window)) {
+                fclose($window);
+            }
         }
         $seconds = $info['playtime_seconds'] ?? null;
         if (isset($info['error']) || (! is_int($seconds) && ! is_float($seconds))) {
@@ -93,12 +104,10 @@ final class Probe
     }
 
     /** The exact duration of an MP3 from its Layer III frames, or null when it has none. */
-    private static function scanMp3(string $path): ?float
+    private static function scanMp3(Source $source): ?float
     {
-        set_error_handler(static fn (): bool => true);
-        $handle = fopen($path, 'rb');
-        restore_error_handler();
-        if ($handle === false) {
+        $handle = $source->probeHandle();
+        if ($handle === null) {
             return null;
         }
         try {
@@ -109,12 +118,10 @@ final class Probe
     }
 
     /** granule position of the last Ogg page / 48000 for an Opus stream; null for anything else. */
-    private static function opusSeconds(string $path): ?float
+    private static function opusSeconds(Source $source): ?float
     {
-        set_error_handler(static fn (): bool => true);
-        $handle = fopen($path, 'rb');
-        restore_error_handler();
-        if ($handle === false) {
+        $handle = $source->probeHandle();
+        if ($handle === null) {
             return null;
         }
         try {

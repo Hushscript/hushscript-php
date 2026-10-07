@@ -31,7 +31,7 @@ final class Options
 
     private const TRANSCRIBE = [
         'title', 'language', 'speakers', 'translate_to', 'keyterms', 'prompt', 'medical', 'multichannel',
-        'auto_insights', 'matter_code', 'duration_seconds', 'idempotency_key', 'concurrency', 'wait_timeout',
+        'auto_insights', 'matter_code', 'duration_seconds', 'size', 'idempotency_key', 'concurrency', 'wait_timeout',
         'on_progress', 'on_resume_token',
     ];
 
@@ -59,6 +59,7 @@ final class Options
         public readonly ?bool $autoInsights,
         public readonly ?string $matterCode,
         public readonly float|int|null $durationSeconds,
+        public readonly ?int $size,
         #[\SensitiveParameter] public readonly ?string $idempotencyKey,
         public readonly int $concurrency,
         public readonly float $waitTimeout,
@@ -109,6 +110,10 @@ final class Options
         if ($duration !== null && self::positiveNumber($duration) === null) {
             throw self::invalid('duration_seconds must be a positive number of seconds.');
         }
+        $size = $raw['size'] ?? null;
+        if ($size !== null && (! is_int($size) || $size < 1)) {
+            throw self::invalid('size must be a positive whole number of bytes.');
+        }
         $key = self::optionalString($raw, 'idempotency_key');
         if ($key !== null && (strlen($key) < self::KEY_MIN || strlen($key) > self::KEY_MAX || preg_match('/^[\x21-\x7E]+$/D', $key) !== 1)) {
             throw self::invalid('idempotency_key must be '.self::KEY_MIN.' to '.self::KEY_MAX.' visible ASCII characters, no spaces.');
@@ -149,6 +154,7 @@ final class Options
             $auto,
             $matterCode,
             is_int($duration) || is_float($duration) ? $duration : null,
+            $size,
             $key,
             $concurrency,
             $waitTimeout,

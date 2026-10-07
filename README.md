@@ -60,8 +60,20 @@ $transcript = $hs->transcribe('/path/to/call.mp3', [
 `transcribe` checks the file (format by its first bytes, duration with getID3, never less than the
 true duration), uploads it in parts, waits for the job and returns a `Transcript`. Options:
 `title`, `language`, `speakers`, `translate_to`, `keyterms`, `prompt`, `medical`, `multichannel`,
-`auto_insights`, `matter_code`, `duration_seconds`, `idempotency_key`, `concurrency`,
+`auto_insights`, `matter_code`, `duration_seconds`, `size`, `idempotency_key`, `concurrency`,
 `wait_timeout`, `on_progress`, `on_resume_token`.
+
+`$file` is a path or an open stream. A stream that can seek is measured and probed like a file; one
+that cannot (a pipe, `php://stdin`) is read once, in order, one part at a time, and needs the `size`
+(bytes) and `duration_seconds` options, and is read from where it stands, so it must start at the first
+byte of the file. A stream that can seek is read from its start whatever its position. The SDK never
+closes a stream.
+Bytes already in memory go in as a `php://memory` stream (a string is always a path):
+
+```php
+$memory = fopen('php://memory', 'r+b'); fwrite($memory, $bytes);
+$transcript = $hs->transcribe($memory);
+```
 
 When the call fails after the upload was created, the error carries `idempotencyKey` and
 `resumeToken`. A wait that runs out raises `WaitTimeoutError` with the token:
@@ -76,6 +88,8 @@ try {
 
 `resume($token, $path)` reads the job first. A job that is past uploading needs no file; one that is
 still uploading is continued with the same file (a different size is refused before any request).
+`$path` may be a stream too; one that cannot seek takes its size from the token and is read from where
+it stands, so it must start at the first byte of the file.
 
 PHP has no background threads. The upload loop owns the heartbeat (a ping at least every 120 s while
 parts are in flight) and runs part requests on its own cURL multi handle, so a part that stalls for
