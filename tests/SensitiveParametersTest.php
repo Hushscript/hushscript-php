@@ -223,7 +223,7 @@ final class SensitiveParametersTest extends TestCase
                 if (preg_match_all('/\$(\w+)/', $declaration, $names) === 0) {
                     continue;
                 }
-                $name = end($names[1]);
+                $name = (string) end($names[1]);
                 $named = preg_match('/token|secret|url|authorization|pat|claim/i', $name) === 1 || preg_match(self::BODY_NAMES, $name) === 1;
                 if ($named && ! str_contains($declaration, '#[\\SensitiveParameter]')) {
                     $found[] = 'line '.$line.' $'.$name;

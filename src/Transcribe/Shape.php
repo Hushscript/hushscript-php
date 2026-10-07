@@ -27,10 +27,12 @@ final class Shape
         return is_int($value) && $value >= 1 ? $value : null;
     }
 
-    /** Whether `segment()` accepts the id: what an id the server sends has to be before the SDK builds a path from it (R53). */
-    public static function usable(mixed $id): bool
+    /**
+     * Whether `segment()` accepts the id: what an id the server sends has to be before the SDK builds a path from it (R53).
+     */
+    public static function usable(string $id): bool
     {
-        return is_string($id) && $id !== '' && $id !== '.' && $id !== '..' && preg_match('//u', $id) === 1 && strpbrk($id, '/\\') === false;
+        return $id !== '' && $id !== '.' && $id !== '..' && preg_match('//u', $id) === 1 && strpbrk($id, '/\\') === false;
     }
 
     /**
@@ -39,7 +41,7 @@ final class Shape
      */
     public static function segment(mixed $id, string $name = 'id'): string
     {
-        if (! self::usable($id)) {
+        if (! is_string($id) || ! self::usable($id)) {
             throw new PreflightError($name.' must be a non-empty string without a slash that is not "." or "..".', 'invalid_option');
         }
 
