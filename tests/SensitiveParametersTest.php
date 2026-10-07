@@ -138,4 +138,3 @@ final class SensitiveParametersTest extends TestCase
         self::assertCount(1, $reflected->getAttributes(\SensitiveParameter::class), $key.' can hold a secret: mark it #[\\SensitiveParameter] or pass it as a Hushscript\\Secret');
     }
 }
-

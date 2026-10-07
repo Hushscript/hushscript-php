@@ -38,19 +38,21 @@ final class WaitTicker
 
     public function sleep(Clock $clock, float $seconds): void
     {
-        if ($this->deadline === null || $this->tick === null) {
+        $deadline = $this->deadline;
+        $tick = $this->tick;
+        if ($deadline === null || $tick === null) {
             $clock->sleep($seconds);
 
             return;
         }
         $end = $clock->now() + $seconds;
         while (true) {
-            ($this->tick)();
+            $tick();
             $left = $end - $clock->now();
             if ($left <= 0) {
                 return;
             }
-            $due = ($this->deadline)() - $clock->now();
+            $due = $deadline() - $clock->now();
             $clock->sleep($due > 0 && $due < $left ? $due : $left);
         }
     }

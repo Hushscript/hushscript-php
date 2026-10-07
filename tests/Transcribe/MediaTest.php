@@ -286,11 +286,11 @@ final class MediaTest extends TestCase
 
     public function testAFifoIsFileUnreadableWithoutBlocking(): void
     {
-        if (! function_exists('posix_mkfifo')) {
-            self::markTestSkipped('ext-posix is missing.');
-        }
         $fifo = sys_get_temp_dir().'/hushscript-fifo-'.bin2hex(random_bytes(4));
-        self::assertTrue(posix_mkfifo($fifo, 0600));
+        exec('mkfifo '.escapeshellarg($fifo).' 2>/dev/null', $ignored, $status);
+        if ($status !== 0) {
+            self::markTestSkipped('mkfifo is not available.');
+        }
         try {
             Source::open($fifo);
             self::fail('expected a PreflightError');
@@ -323,4 +323,3 @@ final class MediaTest extends TestCase
         self::assertLessThan(8.0, $elapsed, 'the junk tail is given up on after a bounded run, not walked to the end');
     }
 }
-

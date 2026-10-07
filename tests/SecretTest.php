@@ -19,7 +19,7 @@ final class SecretTest extends TestCase
     /** @return list<string> every way a value can be turned into text */
     private static function dumps(mixed $subject): array
     {
-        $dumps = [print_r($subject, true), var_export($subject, true), json_encode($subject, JSON_PARTIAL_OUTPUT_ON_ERROR) ?: '', (string) json_encode((array) $subject, JSON_PARTIAL_OUTPUT_ON_ERROR)];
+        $dumps = [print_r($subject, true), var_export($subject, true), (string) json_encode($subject, JSON_PARTIAL_OUTPUT_ON_ERROR), (string) json_encode((array) $subject, JSON_PARTIAL_OUTPUT_ON_ERROR)];
         ob_start();
         var_dump($subject);
         $dumps[] = (string) ob_get_clean();
@@ -62,7 +62,7 @@ final class SecretTest extends TestCase
 
     public function testTheHoldersOfASignedUrlShowNoUrlInAnyDump(): void
     {
-        $clock = new class implements Clock {
+        $clock = new class () implements Clock {
             public function now(): float
             {
                 return 0.0;

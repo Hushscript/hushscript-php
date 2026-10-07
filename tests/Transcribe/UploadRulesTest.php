@@ -87,7 +87,7 @@ final class UploadRulesTest extends TestCase
     public function testAClientThatBlocksPerPartStillGetsAHeartbeatBetweenEveryPart(): void
     {
         $clock = new FakeClock();
-        $client = new class($clock) implements ClientInterface {
+        $client = new class ($clock) implements ClientInterface {
             public function __construct(private readonly FakeClock $clock)
             {
             }
@@ -267,7 +267,7 @@ final class UploadRulesTest extends TestCase
         for ($link = $error; $link !== null; $link = $link->getPrevious()) {
             $surface .= $link->getMessage().$link->getTraceAsString();
             foreach ($link->getTrace() as $frame) {
-                foreach (str_contains((string) ($frame['file'] ?? ''), dirname(__DIR__, 2).'/src/') ? ($frame['args'] ?? []) : [] as $argument) {
+                foreach (str_contains($frame['file'] ?? '', dirname(__DIR__, 2).'/src/') ? ($frame['args'] ?? []) : [] as $argument) {
                     $surface .= $argument instanceof \Closure ? '' : print_r($argument, true);
                 }
             }

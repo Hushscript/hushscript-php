@@ -31,9 +31,6 @@ final class PipelineTest extends TestCase
     /** @var list<string> */
     private array $temp = [];
 
-    /** Where the resume-token callback leaves the token: a static, so no closure of the SDK's reaches it. */
-    private static ?string $handedOut = null;
-
     protected function tearDown(): void
     {
         foreach ($this->temp as $path) {
@@ -73,7 +70,7 @@ final class PipelineTest extends TestCase
         $seen = [];
         for ($link = $error; $link !== null; $link = $link->getPrevious()) {
             // The frames of the SDK; the ones below them are the test runner's own arguments.
-            $frames = array_filter($link->getTrace(), static fn (array $frame): bool => str_contains((string) ($frame['file'] ?? ''), dirname(__DIR__, 2).'/src/'));
+            $frames = array_filter($link->getTrace(), static fn (array $frame): bool => str_contains($frame['file'] ?? '', dirname(__DIR__, 2).'/src/'));
             $out .= $link->getMessage()."\n".$link->getTraceAsString()."\n".self::reachable($frames, 0, $seen);
         }
 
@@ -754,11 +751,12 @@ final class PipelineTest extends TestCase
         if ($scenario === 'job_failed') {
             $harness->api->on('GET', '/v1/jobs/[^/]+', PipelineHarness::json(200, ['id' => 'job_1', 'state' => 'failed', 'error' => 'boom', 'failure_kind' => 'x']));
         }
-        self::$handedOut = null;
+        /** @var \ArrayObject<int, string> $handedOut */
+        $handedOut = new \ArrayObject();
 
         try {
-            self::go($harness, ['on_resume_token' => static function (string $value): void {
-                self::$handedOut = $value;
+            self::go($harness, ['on_resume_token' => static function (string $value) use ($handedOut): void {
+                $handedOut->append($value);
             }]);
             self::fail('expected a failure');
         } catch (HushscriptException $error) {
@@ -766,8 +764,8 @@ final class PipelineTest extends TestCase
             $harness->parts->sent = [];
             $harness->api->requests = [];
             $surface = self::surface($error);
-            $token = self::$handedOut;
-            self::assertNotNull($token, 'the create succeeded, so a resume token was handed out');
+            $token = $handedOut->getArrayCopy()[0] ?? null;
+            self::assertIsString($token, 'the create succeeded, so a resume token was handed out');
             foreach (['X-Amz-Signature', 'SECRET', 'r2.example.com', \Hushscript\Tests\Support\Tokens::TEST, $token] as $needle) {
                 $at = strpos($surface, $needle);
                 self::assertFalse($at, $needle === $token ? 'the resume token' : $needle.' near: '.preg_replace('/[^\x20-\x7e]/', '.', substr($surface, max(0, (int) $at - 150), 300)));
