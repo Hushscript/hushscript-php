@@ -291,13 +291,26 @@ final class MediaTest extends TestCase
         if ($status !== 0) {
             self::markTestSkipped('mkfifo is not available.');
         }
+        // Run in a child that is killed after 10 s: a regression would block in open() for good, and must fail instead of hanging.
+        $script = 'require $argv[1]; try { Hushscript\\Transcribe\\Source::open($argv[2]); echo "opened"; } catch (Hushscript\\Exception\\PreflightError $e) { echo $e->errorCode, "|", $e->getMessage(); }';
+        $process = proc_open([PHP_BINARY, '-r', $script, dirname(__DIR__, 2).'/vendor/autoload.php', $fifo], [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
+        self::assertIsResource($process);
         try {
-            Source::open($fifo);
-            self::fail('expected a PreflightError');
-        } catch (PreflightError $error) {
-            self::assertSame('file_unreadable', $error->errorCode);
-            self::assertStringContainsString('not a regular file', $error->getMessage());
+            stream_set_blocking($pipes[1], false);
+            $deadline = microtime(true) + 10.0;
+            while (microtime(true) < $deadline && (proc_get_status($process)['running'])) {
+                usleep(20000);
+            }
+            $finished = ! proc_get_status($process)['running'];
+            $output = (string) stream_get_contents($pipes[1]);
+            if (! $finished) {
+                proc_terminate($process, 9);
+            }
+            self::assertTrue($finished, 'Source::open blocked on a FIFO');
+            self::assertStringStartsWith('file_unreadable|', $output);
+            self::assertStringContainsString('not a regular file', $output);
         } finally {
+            proc_close($process);
             unlink($fifo);
         }
     }
