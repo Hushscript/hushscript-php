@@ -27,11 +27,14 @@ final class Shape
         return is_int($value) && $value >= 1 ? $value : null;
     }
 
-    /** An id that goes into a URL path: non-empty, not a dot segment, percent-encoded. */
+    /**
+     * An id that goes into a URL path as one segment: non-empty, valid UTF-8, not a dot segment and without a
+     * slash or backslash (which a client or proxy may treat as a separator once decoded), percent-encoded.
+     */
     public static function segment(mixed $id, string $name = 'id'): string
     {
-        if (! is_string($id) || $id === '' || $id === '.' || $id === '..' || preg_match('//u', $id) !== 1) {
-            throw new PreflightError($name.' must be a non-empty string that is not "." or "..".', 'invalid_option');
+        if (! is_string($id) || $id === '' || $id === '.' || $id === '..' || preg_match('//u', $id) !== 1 || strpbrk($id, '/\\') !== false) {
+            throw new PreflightError($name.' must be a non-empty string without a slash that is not "." or "..".', 'invalid_option');
         }
 
         return rawurlencode($id);
