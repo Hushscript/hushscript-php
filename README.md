@@ -3,14 +3,15 @@
 Official PHP SDK for the [Hushscript](https://hushscript.com) transcription API.
 
 This is the core client: configuration, a hardened HTTP layer (retries, rate-limit pacing, per-attempt
-authorization, token redaction), typed errors with hints, and a generic call for every `/v1`
-operation. The friendly layer (`transcribe`, `balance`, `buy` and the rest of the SDK spec) follows in
-the next release.
+authorization, token redaction), typed errors with hints, a generic call for every `/v1` operation and
+the transcribe pipeline (`transcribe`, `resume`, `jobs()->wait`). The rest of the friendly layer
+(`balance`, `buy` and the other resources of the SDK spec) follows in the next release.
 
 ## Requirements
 
 - PHP 8.2 or newer
-- `guzzlehttp/guzzle` ^7 (installed by Composer)
+- `guzzlehttp/guzzle` ^7 and `james-heinrich/getid3` (installed by Composer)
+- `ext-curl` for concurrent part uploads (without it, or with a client of your own, parts go one at a time)
 
 ```sh
 composer require hushscript/hushscript
@@ -32,6 +33,45 @@ echo $account['balance_seconds'];
 `$hs->api()->request(string $method, string $path, array $query = [], ?array $body = null): array`
 returns the decoded JSON body. Non-2xx answers raise a `Hushscript\Exception\*` error.
 
+## Transcribing
+
+```php
+$transcript = $hs->transcribe('/path/to/call.mp3', [
+    'language' => 'en',
+    'wait_timeout' => 1800,
+    'on_progress' => fn (array $progress) => print_r($progress),
+]);
+```
+
+`transcribe` checks the file (format by its first bytes, duration with getID3 and never less than
+the true duration), uploads it in parts, waits for the job and returns the transcript as the API sent
+it. Options use snake_case: `title`, `language`, `speakers`, `translate_to`, `keyterms`, `prompt`,
+`medical`, `multichannel`, `auto_insights`, `matter_code`, `duration_seconds`, `idempotency_key`,
+`concurrency`, `wait_timeout`, `on_progress`, `on_resume_token`.
+
+When the call fails after the upload was created, the error carries `idempotencyKey` and
+`resumeToken`. A wait that runs out raises `WaitTimeoutError` with the token:
+
+```php
+try {
+    $hs->transcribe($path, ['wait_timeout' => 60]);
+} catch (\Hushscript\Exception\WaitTimeoutError $timeout) {
+    $transcript = $hs->resume($timeout->resumeToken, $path);
+}
+```
+
+`resume($token, $path)` reads the job first. A job that is past uploading needs no file; one that is
+still uploading is continued with the same file (a different size is refused before any request).
+`$hs->jobs()->wait($jobId, ['wait_timeout' => 600])` polls any job until it is done.
+
+PHP has no background threads. The upload loop owns the heartbeat (a ping at least every 120 s while
+parts are in flight) and runs part requests on its own cURL multi handle, so a part that stalls for
+minutes does not stop the heartbeat. With your own `http_client`, parts go through it one at a time
+(no `Authorization` header is added to signed part URLs) and the heartbeat runs between parts, so a
+single part that takes longer than 120 s leaves a longer gap. The `part_transport` option (an instance
+of `Hushscript\Transcribe\PartTransport`) replaces how parts are sent; a clock that also implements
+`Hushscript\IdleClock` lets tests move time while requests are in flight.
+
 ## Configuration
 
 | Option | Env var | Default |
@@ -43,6 +83,7 @@ returns the decoded JSON body. Non-2xx answers raise a `Hushscript\Exception\*` 
 | `log_level` | `HUSHSCRIPT_LOG` | `off` (`debug` logs one metadata line per attempt to standard error) |
 | `http_client` | none | a PSR-18 client; Guzzle by default |
 | `clock` | none | `Hushscript\Clock`, for tests |
+| `part_transport` | none | advanced: a `Hushscript\Transcribe\PartTransport` for part uploads |
 
 An explicit option beats its environment variable. The base URL must be `https://`, or `http://` to
 `localhost`, `127.0.0.1` or `[::1]`, with no path.
