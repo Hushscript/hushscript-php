@@ -21,7 +21,10 @@ final class SlowRead extends \php_user_filter
     public function filter($in, $out, &$consumed, bool $closing): int
     {
         while (($bucket = stream_bucket_make_writeable($in)) !== null) {
-            $consumed = (int) $consumed + (int) $bucket->datalen;
+            $length = $bucket->datalen;
+            if (is_int($length)) {
+                $consumed += $length;
+            }
             if (self::$onChunk !== null) {
                 (self::$onChunk)();
             }
