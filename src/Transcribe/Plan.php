@@ -27,6 +27,7 @@ final class Plan
         #[\SensitiveParameter] array $urls,
         public readonly ?int $nextPart,
         public readonly int $status = 200,
+        public readonly bool $directAvailable = true,
     ) {
         self::$urls ??= new \WeakMap();
         self::$urls[$this] = $urls;
@@ -71,7 +72,8 @@ final class Plan
             $urls[$n] = new Secret($url);
         }
 
-        return new self($partSize, $total, $urls, is_int($next) ? $next : null, $status);
+        // A null part_urls (not an empty list) says the job takes no direct upload: no page is asked for (R70).
+        return new self($partSize, $total, $urls, is_int($next) ? $next : null, $status, ! (array_key_exists('part_urls', $fields) && $fields['part_urls'] === null));
     }
 
     /** The plan checked against the file: one part per `part_size` bytes, no more and no fewer. */

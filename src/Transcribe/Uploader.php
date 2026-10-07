@@ -74,6 +74,7 @@ final class Uploader
         $this->state = new UploadState($plan === null ? UploadState::PROXIED : UploadState::UNDECIDED);
         $this->book = new UrlBook($clock);
         $this->book->store($this->plan->urls(), $this->plan->nextPart);
+        $this->book->direct = $this->plan->directAvailable;
     }
 
     /**

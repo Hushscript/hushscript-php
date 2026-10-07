@@ -262,6 +262,7 @@ final class UploadRulesTest extends TestCase
     public static function pagesWithoutUrls(): iterable
     {
         yield 'a null page' => [new Response(200, ['Content-Type' => 'application/json'], 'null')];
+        yield 'a page whose part_urls is null' => [PipelineHarness::json(200, ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => null, 'next_part_number' => null])];
         yield 'an empty page' => [PipelineHarness::json(200, ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => [], 'next_part_number' => null])];
     }
 
@@ -276,6 +277,21 @@ final class UploadRulesTest extends TestCase
 
         self::assertSame(['PUT api:1', 'PUT api:2', 'PUT api:3'], $harness->parts->lines());
         self::assertCount(1, $harness->api->to('GET', '/v1/uploads/job_1/part-urls'), 'the answer is not asked for again');
+    }
+
+    public function testACreateWhosePartUrlsIsNullMeansTheApiTakesTheParts(): void
+    {
+        $harness = new PipelineHarness();
+        $body = $harness->createBody();
+        self::assertIsArray($body['upload']);
+        $body['upload']['part_urls'] = null;
+        $body['upload']['next_part_number'] = null;
+        $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, $body));
+
+        self::go($harness);
+
+        self::assertSame(['PUT api:1', 'PUT api:2', 'PUT api:3'], $harness->parts->lines());
+        self::assertSame([], $harness->api->to('GET', '/v1/uploads/job_1/part-urls'));
     }
 
     public function testANullPageAfterADirectSuccessIsPartUrlMissing(): void
