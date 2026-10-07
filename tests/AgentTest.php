@@ -415,6 +415,25 @@ final class AgentTest extends TestCase
         self::assertSame(1, $http->count());
     }
 
+    public function testAnyFailureWhileUsingAClaimAnswerThatCarriedATokenIsAnUnknownOutcomeWithTheToken(): void
+    {
+        $rig = new Rig(new FakeHttp([FakeHttp::json(200, self::claimed())]));
+        $minted = new \ReflectionMethod(Agent::class, 'minted');
+
+        try {
+            $minted->invoke(null, $rig->exchange, $rig->credentials, '/v1/agent/accounts/sg_1/claim', ['claim_secret' => 'cs_secret_0123456789ab'], \Hushscript\Http\Routes::CLAIM, static function (\Hushscript\Http\Body $answer, ?string $seen): never {
+                throw new \LogicException('not a bad body '.$seen);
+            });
+            self::fail('expected OutcomeUnknownError');
+        } catch (OutcomeUnknownError $error) {
+            self::assertSame(Tokens::ROTATED, $error->receivedToken());
+            self::assertSame(self::CLAIM_HINT, $error->hint);
+            self::assertInstanceOf(\RuntimeException::class, $error->getPrevious());
+            self::assertStringContainsString('not a bad body', (string) $error->getPrevious()->getMessage());
+            self::assertStringNotContainsString(Tokens::ROTATED, $error->getMessage().$error->getPrevious()->getMessage());
+        }
+    }
+
     public function testAFailureBeforeTheClaimWasSentIsPlainNetworkErrorAndStillNotReplayed(): void
     {
         $refused = new ConnectException('cURL error 7', new Request('POST', Rig::BASE.'/x'), null, ['errno' => 7, 'pretransfer_time' => 0.0]);
