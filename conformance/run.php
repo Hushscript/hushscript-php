@@ -62,7 +62,9 @@ final class VirtualClock implements Clock
 {
     public float $time = 0.0;
 
-    public function __construct(private readonly Mock $mock) {}
+    public function __construct(private readonly Mock $mock)
+    {
+    }
 
     #[\Override]
     public function now(): float
@@ -82,7 +84,6 @@ final class VirtualClock implements Clock
 }
 
 /**
- * @param  array<mixed>  $expected
  * @return list<string>
  */
 function subset(mixed $expected, mixed $actual, string $path = 'result'): array
@@ -183,7 +184,7 @@ function checkError(array $expected, \Throwable $error): array
     }
     $fields = $expected['fields'] ?? [];
     foreach (is_array($fields) ? $fields : [] as $name => $value) {
-        $actual = property_exists($error, (string) $name) ? $error->{(string) $name} : null;
+        $actual = get_object_vars($error)[$name] ?? null;
         $present = $value === '<present>' ? ! in_array($actual, [null, '', []], true) : $actual === $value;
         if (! $present) {
             $problems[] = "fields.{$name}: expected ".json_encode($value).', got '.json_encode($actual);
@@ -192,7 +193,10 @@ function checkError(array $expected, \Throwable $error): array
     $surface = surface($error);
     $excluded = $expected['messageExcludes'] ?? [];
     foreach (is_array($excluded) ? $excluded : [] as $text) {
-        $needle = $text === '$TOKEN' ? TEST_TOKEN : (string) $text;
+        if (! is_string($text)) {
+            continue;
+        }
+        $needle = $text === '$TOKEN' ? TEST_TOKEN : $text;
         if (str_contains($surface, $needle)) {
             $problems[] = 'the error surface contains '.json_encode($text);
         }
@@ -275,15 +279,15 @@ function main(): int
 {
     $strict = getenv('CONFORMANCE_STRICT') === '1';
     $counts = ['PASS' => 0, 'FAIL' => 0, 'SKIP' => 0];
-    $mock = new Mock;
+    $mock = new Mock();
     $names = $mock->get('/__scenarios')['scenarios'] ?? [];
     if (! is_array($names) || $names === []) {
         fwrite(STDERR, "the mock lists no scenarios\n");
 
         return 1;
     }
-    foreach ($names as $name) {
-        [$status, $reason] = runScenario($mock, (string) $name);
+    foreach (array_filter($names, is_string(...)) as $name) {
+        [$status, $reason] = runScenario($mock, $name);
         if ($status === 'SKIP' && $strict) {
             [$status, $reason] = ['FAIL', "skipped in strict mode: {$reason}"];
         }

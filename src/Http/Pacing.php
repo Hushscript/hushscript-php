@@ -23,7 +23,8 @@ final class Pacing
         private readonly Clock $clock,
         private readonly int $capacity = self::CREATES_PER_WINDOW,
         private readonly float $window = self::WINDOW_SECONDS,
-    ) {}
+    ) {
+    }
 
     public function reserve(): float
     {

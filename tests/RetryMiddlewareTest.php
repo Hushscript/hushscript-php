@@ -612,8 +612,8 @@ final class RetryMiddlewareTest extends TestCase
 
         $rig->api->request('POST', '/v1/uploads', body: ['idempotency_key' => self::KEY]); // token 5 waits
 
-        self::assertCount(3, $rig->clock->sleeps);
-        self::assertEqualsWithDelta(59.0, $rig->clock->sleeps[2], 0.001);
+        self::assertCount(3, $rig->clock->slept());
+        self::assertEqualsWithDelta(59.0, $rig->clock->slept()[2], 0.001);
     }
 
     public function testUnkeyedCreatesAndOtherPathsAreHandledByPathNotByKey(): void
@@ -626,10 +626,10 @@ final class RetryMiddlewareTest extends TestCase
         }
         self::assertCount(1, $rig->clock->sleeps, 'an unkeyed create is still a create and still paced');
 
-        $before = count($rig->clock->sleeps);
+        $before = count($rig->clock->slept());
         $rig->api->request('GET', '/v1/uploads');
         $rig->api->request('POST', '/v1/uploads/j1/heartbeat', body: []);
-        self::assertCount($before, $rig->clock->sleeps, 'only POST /v1/uploads is paced');
+        self::assertCount($before, $rig->clock->slept(), 'only POST /v1/uploads is paced');
     }
 
     // Complete, parts, heartbeat
@@ -847,10 +847,10 @@ final class RetryMiddlewareTest extends TestCase
 
     public function testTheDefaultJitterStaysInsideTheCeiling(): void
     {
-        $clock = new FakeClock;
+        $clock = new FakeClock();
         $http = new FakeHttp([self::reply(503), self::ok()]);
         $credentials = new \Hushscript\Credentials(Tokens::TEST);
-        $transport = new \Hushscript\Http\RetryMiddleware($http, $credentials, Rig::BASE, $clock, new \Hushscript\Log, 3);
+        $transport = new \Hushscript\Http\RetryMiddleware($http, $credentials, Rig::BASE, $clock, new \Hushscript\Log(), 3);
 
         $transport->sendRequest(new Request('GET', Rig::BASE.'/v1/account'));
 

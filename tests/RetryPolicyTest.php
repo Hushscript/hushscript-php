@@ -46,7 +46,7 @@ final class RetryPolicyTest extends TestCase
     public function testASuccessIsNeverRetried(): void
     {
         self::assertFalse(RetryPolicy::decide(RetryClass::Safe, 0, 3, new Outcome(200), self::jitter())->retry);
-        self::assertFalse(RetryPolicy::decide(RetryClass::Safe, 0, 3, new Outcome, self::jitter())->retry);
+        self::assertFalse(RetryPolicy::decide(RetryClass::Safe, 0, 3, new Outcome(), self::jitter())->retry);
     }
 
     public function testCreateLimitKinds(): void

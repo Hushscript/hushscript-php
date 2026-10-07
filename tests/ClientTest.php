@@ -18,19 +18,19 @@ final class ClientTest extends TestCase
     public function testTheApiWorksThroughACustomPsr18Client(): void
     {
         $http = new FakeHttp([FakeHttp::json(500), FakeHttp::json(200, ['balance_seconds' => 60])]);
-        $clock = new FakeClock;
+        $clock = new FakeClock();
         $client = new Client(Tokens::TEST, ['base_url' => 'http://127.0.0.1:4010', 'http_client' => $http, 'clock' => $clock]);
 
         self::assertSame(['balance_seconds' => 60], $client->api()->request('GET', '/v1/account'));
         self::assertSame($client->api(), $client->api());
         self::assertCount(2, $http->requests);
-        self::assertSame(1, count($clock->sleeps));
+        self::assertCount(1, $clock->sleeps);
     }
 
     public function testTheDefaultClientRetriesAConnectionRefusalAsNotSent(): void
     {
         // Real Guzzle and cURL against a loopback port nobody listens on: connection refused is a setup failure.
-        $clock = new FakeClock;
+        $clock = new FakeClock();
         $client = new Client(Tokens::TEST, ['base_url' => 'http://127.0.0.1:9', 'clock' => $clock, 'max_retries' => 2, 'timeout' => 5]);
 
         try {
@@ -45,7 +45,7 @@ final class ClientTest extends TestCase
     public function testTheMaxRetriesOptionIsHonored(): void
     {
         $http = new FakeHttp([FakeHttp::json(503), FakeHttp::json(200, [])]);
-        $client = new Client(Tokens::TEST, ['base_url' => 'http://127.0.0.1:4010', 'http_client' => $http, 'clock' => new FakeClock, 'max_retries' => 0]);
+        $client = new Client(Tokens::TEST, ['base_url' => 'http://127.0.0.1:4010', 'http_client' => $http, 'clock' => new FakeClock(), 'max_retries' => 0]);
 
         $this->expectException(\Hushscript\Exception\ApiError::class);
         $client->api()->request('GET', '/v1/account');
@@ -68,7 +68,7 @@ final class ClientTest extends TestCase
 
     public function testTheSystemClockSleepsAndIsMonotonic(): void
     {
-        $clock = new SystemClock;
+        $clock = new SystemClock();
         $before = $clock->now();
 
         $clock->sleep(0.01);

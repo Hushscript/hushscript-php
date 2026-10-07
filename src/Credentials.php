@@ -20,7 +20,7 @@ final class Credentials
 
     public function __construct(#[\SensitiveParameter] string $token)
     {
-        self::$tokens ??= new \WeakMap;
+        self::$tokens ??= new \WeakMap();
         self::$tokens[$this] = [$token];
     }
 
@@ -33,7 +33,7 @@ final class Credentials
 
     public function replace(#[\SensitiveParameter] string $token): void
     {
-        self::$tokens ??= new \WeakMap;
+        self::$tokens ??= new \WeakMap();
         self::$tokens[$this] = [...(self::$tokens[$this] ?? []), $token];
     }
 

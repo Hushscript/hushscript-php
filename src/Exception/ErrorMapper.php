@@ -7,6 +7,7 @@ namespace Hushscript\Exception;
 use Hushscript\Credentials;
 use Hushscript\Generated\Catalog;
 use Hushscript\Generated\Scopes;
+use Hushscript\Http\Routes;
 use Psr\Http\Message\ResponseInterface;
 
 /**
@@ -56,7 +57,9 @@ final class ErrorMapper
     /** @var list<array{string, string}>|null  [regex, key] */
     private static ?array $patterns = null;
 
-    private function __construct() {}
+    private function __construct()
+    {
+    }
 
     /** Maps a concrete request (`GET`, `/v1/jobs/abc`) to its Scopes::OPERATIONS key. */
     public static function operationKey(string $method, string $path): ?string
@@ -71,7 +74,7 @@ final class ErrorMapper
             array_keys(Scopes::OPERATIONS),
         );
         $prefix = strtoupper($method).' ';
-        $path = rtrim($path, '/') ?: '/';
+        $path = Routes::normalize($path);
         foreach (self::$patterns as [$regex, $key]) {
             if (str_starts_with($key, $prefix) && preg_match($regex, $path) === 1) {
                 return $key;
@@ -101,7 +104,8 @@ final class ErrorMapper
         $code = is_string($slug) && $slug !== '' ? $slug : 'http_'.$status;
         $meaning = Catalog::ENTRIES[$code]['meaning'] ?? null;
         $message = $meaning ?? "The API answered {$status} ({$code}).";
-        $retryAfter = self::parseRetryAfter($response->getHeaderLine('Retry-After') ?: null);
+        $retryAfterHeader = $response->getHeaderLine('Retry-After');
+        $retryAfter = self::parseRetryAfter($retryAfterHeader === '' ? null : $retryAfterHeader);
         $details = self::asRecord(self::snakeKeys($credentials->scrubValue(self::extraDetails($body))));
         if ($retryAfter === null) {
             $fromDetails = $details['retry_after_seconds'] ?? null;

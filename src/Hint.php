@@ -12,7 +12,9 @@ use Hushscript\Generated\Hints;
  */
 final class Hint
 {
-    private function __construct() {}
+    private function __construct()
+    {
+    }
 
     /**
      * @param  array<string, mixed>  $details  the API's extra body keys, snake_case
@@ -25,7 +27,8 @@ final class Hint
         }
         $context = self::context($details, $retryAfter, $scope);
         $kept = [];
-        foreach (preg_split('/(?<=\.) /', $template) ?: [] as $sentence) {
+        $sentences = preg_split('/(?<=\.) /', $template);
+        foreach ($sentences === false ? [] : $sentences as $sentence) {
             preg_match_all('/\{(\w+)\}/', $sentence, $found);
             foreach ($found[1] as $name) {
                 if (! array_key_exists($name, $context)) {
@@ -92,7 +95,7 @@ final class Hint
             return implode(', ', array_map(static fn (mixed $item): string => is_scalar($item) ? (string) $item : '', $value));
         }
 
-        return is_scalar($value) ? (string) $value : '';
+        return is_string($value) ? $value : '';
     }
 
     private static function number(mixed $value): int|float|null

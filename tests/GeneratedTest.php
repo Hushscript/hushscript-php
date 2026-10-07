@@ -7,13 +7,14 @@ namespace Hushscript\Tests;
 use Hushscript\Generated\Catalog;
 use Hushscript\Generated\Hints;
 use Hushscript\Generated\Scopes;
-use Hushscript\Tests\Support\Conformance;
-use PHPUnit\Framework\TestCase;
 
 use function Hushscript\Scripts\emitCatalog;
 use function Hushscript\Scripts\emitHints;
 use function Hushscript\Scripts\emitScopes;
 use function Hushscript\Scripts\generate;
+
+use Hushscript\Tests\Support\Conformance;
+use PHPUnit\Framework\TestCase;
 
 require_once __DIR__.'/../scripts/generate.php';
 
@@ -46,6 +47,7 @@ final class GeneratedTest extends TestCase
         self::assertIsArray($catalog);
 
         self::assertCount(count($catalog), Catalog::ENTRIES);
+        // @phpstan-ignore staticMethod.alreadyNarrowedType (the generated constant is pinned on purpose)
         self::assertSame(['code' => 3001, 'status' => 402], array_intersect_key(Catalog::ENTRIES['insufficient_balance'], ['code' => 0, 'status' => 0]));
     }
 
@@ -67,6 +69,7 @@ final class GeneratedTest extends TestCase
         sort($mapped);
 
         self::assertSame($declared, $mapped);
+        // @phpstan-ignore staticMethod.alreadyNarrowedType (the generated constant is pinned on purpose)
         self::assertSame('account:read', Scopes::OPERATIONS['GET /v1/account']);
     }
 

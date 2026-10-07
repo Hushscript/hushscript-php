@@ -87,7 +87,7 @@ final class RetryMiddleware implements ClientInterface
             // Only a keyed create is a safe replay; without a key it is any other mutation.
             $class = RetryClass::Mutate;
         }
-        $paced = $onBase && $method === 'POST' && (rtrim($path, '/') ?: '/') === '/v1/uploads';
+        $paced = $onBase && $method === 'POST' && Routes::normalize($path) === '/v1/uploads';
         $label = $onBase ? $uri->getPath() : 'external';
         $rewindable = $request->getBody()->isSeekable();
         $maxRetries = $rewindable ? $this->maxRetries : 0;
@@ -170,7 +170,9 @@ final class RetryMiddleware implements ClientInterface
             $slug = is_string($value) ? $value : null;
         }
 
-        return new Outcome($status, ErrorMapper::parseRetryAfter($response->getHeaderLine('Retry-After') ?: null), $slug);
+        $retryAfter = $response->getHeaderLine('Retry-After');
+
+        return new Outcome($status, ErrorMapper::parseRetryAfter($retryAfter === '' ? null : $retryAfter), $slug);
     }
 
     private function failureError(RetryClass $class, ?string $route, string $method, string $label, string $summary, bool $notSent): HushscriptException

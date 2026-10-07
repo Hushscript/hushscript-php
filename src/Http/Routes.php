@@ -18,14 +18,16 @@ final class Routes
 
     private const JOB = '/v1/uploads/[^/]+';
 
-    private function __construct() {}
+    private function __construct()
+    {
+    }
 
     /**
      * @return array{RetryClass, string|null}|null  the class and, for a credential-minting route, its name
      */
     private static function route(string $method, string $path): ?array
     {
-        $path = rtrim($path, '/') ?: '/';
+        $path = self::normalize($path);
         $routes = [
             ['POST', '~^'.self::JOB.'/heartbeat$~D', RetryClass::Safe, null],
             ['PUT', '~^'.self::JOB.'/parts/[^/]+$~D', RetryClass::Part, null],
@@ -43,6 +45,14 @@ final class Routes
         }
 
         return null;
+    }
+
+    /** The path without trailing slashes; the root stays "/". */
+    public static function normalize(string $path): string
+    {
+        $trimmed = rtrim($path, '/');
+
+        return $trimmed === '' ? '/' : $trimmed;
     }
 
     public static function classify(string $method, string $path): RetryClass

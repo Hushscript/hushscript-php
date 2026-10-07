@@ -25,7 +25,7 @@ final class Rig
 
     public function __construct(
         public readonly FakeHttp $http,
-        public readonly FakeClock $clock = new FakeClock,
+        public readonly FakeClock $clock = new FakeClock(),
         int $maxRetries = 3,
         string $token = Tokens::TEST,
         string $logLevel = 'debug',

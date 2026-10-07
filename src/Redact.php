@@ -18,7 +18,9 @@ final class Redact
     // The query of a presigned storage URL is a signature, so no text the SDK shows keeps one.
     private const URL_QUERY_PATTERN = '~(https?://[^\s"\'<>?#]+)\?[^\s"\'<>#]*~';
 
-    private function __construct() {}
+    private function __construct()
+    {
+    }
 
     public static function text(string $text): string
     {

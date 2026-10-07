@@ -31,7 +31,8 @@ final class HintTest extends TestCase
         /** @var array<string, mixed> $details */
         $scope = isset($case['scope']) && is_string($case['scope']) ? $case['scope'] : null;
 
-        self::assertSame($case['expected'], Hint::render((string) $case['slug'], $details, null, $scope));
+        self::assertIsString($case['slug']);
+        self::assertSame($case['expected'], Hint::render($case['slug'], $details, null, $scope));
     }
 
     public function testTheGeneratedTableIsTheConformanceHintsFile(): void
@@ -77,8 +78,8 @@ final class HintTest extends TestCase
         self::assertSame('Accept the current terms version: 3.', Hint::render('policy_version_stale', ['current_version' => 3.0]));
         self::assertSame('Accept the current terms version: true.', Hint::render('policy_version_stale', ['current_version' => true]));
         self::assertSame('Accept the current terms version: false.', Hint::render('policy_version_stale', ['current_version' => false]));
-        self::assertSame('Accept the current terms version: 1, 2, .', Hint::render('policy_version_stale', ['current_version' => [1, 2, new \stdClass]]));
-        self::assertSame('Accept the current terms version: .', Hint::render('policy_version_stale', ['current_version' => new \stdClass]));
+        self::assertSame('Accept the current terms version: 1, 2, .', Hint::render('policy_version_stale', ['current_version' => [1, 2, new \stdClass()]]));
+        self::assertSame('Accept the current terms version: .', Hint::render('policy_version_stale', ['current_version' => new \stdClass()]));
     }
 
     public function testMinutesRoundTheRightWay(): void

@@ -12,7 +12,7 @@ final class PacingTest extends TestCase
 {
     public function testFourSlotsAreFreeThenTheFifthWaitsForTheFirstToAge(): void
     {
-        $clock = new FakeClock;
+        $clock = new FakeClock();
         $pacing = new Pacing($clock);
 
         foreach ([0.0, 10.0, 10.0, 10.0] as $advance) {
@@ -26,7 +26,7 @@ final class PacingTest extends TestCase
 
     public function testASlotIsBookedForTheFutureSoAnotherCallerWaitsBehindIt(): void
     {
-        $clock = new FakeClock;
+        $clock = new FakeClock();
         $pacing = new Pacing($clock, 1, 60.0);
 
         self::assertSame(0.0, $pacing->reserve());
@@ -36,7 +36,7 @@ final class PacingTest extends TestCase
 
     public function testSlotsAgeOutOfTheWindow(): void
     {
-        $clock = new FakeClock;
+        $clock = new FakeClock();
         $pacing = new Pacing($clock);
         for ($i = 0; $i < 4; $i++) {
             $pacing->reserve();
@@ -48,7 +48,7 @@ final class PacingTest extends TestCase
 
     public function testASlotExactlyOneWindowOldIsFree(): void
     {
-        $clock = new FakeClock;
+        $clock = new FakeClock();
         $pacing = new Pacing($clock, 1, 60.0);
         $pacing->reserve();
         $clock->time = 59.9;

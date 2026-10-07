@@ -16,6 +16,12 @@ final class FakeClock implements Clock
     /** @var (\Closure(float): void)|null */
     public ?\Closure $onSleep = null;
 
+    /** @return list<float> */
+    public function slept(): array
+    {
+        return $this->sleeps;
+    }
+
     #[\Override]
     public function now(): float
     {

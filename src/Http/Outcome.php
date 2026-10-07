@@ -13,5 +13,6 @@ final readonly class Outcome
         public ?string $slug = null,
         public bool $failed = false,
         public bool $notSent = false,
-    ) {}
+    ) {
+    }
 }

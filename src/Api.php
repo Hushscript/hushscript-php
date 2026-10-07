@@ -21,7 +21,8 @@ final class Api
         private readonly ClientInterface $http,
         private readonly Credentials $credentials,
         private readonly string $baseUrl,
-    ) {}
+    ) {
+    }
 
     /**
      * Sends one request and returns the decoded JSON body (an empty array for an empty body).

@@ -13,6 +13,7 @@ use Hushscript\Redact;
  */
 class HushscriptException extends \RuntimeException
 {
+    /** @var string */
     public const DEFAULT_CODE = 'hushscript_error';
 
     protected const AUTO_HINT = true;

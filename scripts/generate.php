@@ -103,7 +103,7 @@ function emitScopes(mixed $spec): string
     ksort($entries, SORT_STRING);
     $lines = [];
     foreach ($entries as $key => $scope) {
-        $lines[] = '        '.literal((string) $key).' => '.literal($scope).',';
+        $lines[] = '        '.literal($key).' => '.literal($scope).',';
     }
 
     return wrap('Scopes', "    /** @var array<string, string> */\n    public const OPERATIONS = [\n".implode("\n", $lines)."\n    ];");
@@ -125,7 +125,9 @@ function emitHints(mixed $hints): string
 
 function conformanceRef(string $root): string
 {
-    return trim(file_get_contents($root.'/conformance-ref') ?: '');
+    $text = file_get_contents($root.'/conformance-ref');
+
+    return $text === false ? '' : trim($text);
 }
 
 function fetchText(string $url): string
@@ -167,6 +169,8 @@ function generate(string $root, string $source = DEFAULT_SPEC): void
     file_put_contents($root.'/src/Generated/Hints.php', $hints);
 }
 
-if (PHP_SAPI === 'cli' && isset($_SERVER['argv'][0]) && realpath($_SERVER['argv'][0]) === __FILE__) {
-    generate(dirname(__DIR__), $_SERVER['argv'][1] ?? DEFAULT_SPEC);
+$arguments = $_SERVER['argv'] ?? [];
+if (PHP_SAPI === 'cli' && is_array($arguments) && is_string($arguments[0] ?? null) && realpath($arguments[0]) === __FILE__) {
+    $spec = $arguments[1] ?? DEFAULT_SPEC;
+    generate(dirname(__DIR__), is_string($spec) ? $spec : DEFAULT_SPEC);
 }

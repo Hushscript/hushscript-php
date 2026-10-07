@@ -73,7 +73,6 @@ final class ExceptionTest extends TestCase
         self::assertNull($error->status);
         self::assertSame([], $error->details);
         self::assertNull($error->retryAfter);
-        self::assertInstanceOf(\RuntimeException::class, $error);
     }
 
     public function testTheBaseCanBeRaisedDirectly(): void
@@ -119,10 +118,12 @@ final class ExceptionTest extends TestCase
     public function testTheResumeFieldsCanBeSetAfterwards(): void
     {
         $error = new UploadError('x');
-        $error->idempotencyKey = 'k';
-        $error->resumeToken = 't';
+        $key = bin2hex(random_bytes(8));
+        $resume = bin2hex(random_bytes(8));
+        $error->idempotencyKey = $key;
+        $error->resumeToken = $resume;
 
-        self::assertSame(['k', 't'], [$error->idempotencyKey, $error->resumeToken]);
+        self::assertSame([$key, $resume], [$error->idempotencyKey, $error->resumeToken]);
     }
 
     public function testJobFailedErrorCarriesItsFields(): void

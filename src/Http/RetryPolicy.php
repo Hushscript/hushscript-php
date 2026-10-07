@@ -29,7 +29,9 @@ final class RetryPolicy
 
     private const PURCHASE_RETRIES = 1;
 
-    private function __construct() {}
+    private function __construct()
+    {
+    }
 
     /** Full jitter: random(0, min(8 s, 0.5 s * 2^attempt)); `$attempt` counts retries from 0. */
     public static function backoffCeiling(int $attempt): float

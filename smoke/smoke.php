@@ -6,7 +6,7 @@ declare(strict_types=1);
 
 require __DIR__.'/../vendor/autoload.php';
 
-$account = (new Hushscript\Client)->api()->request('GET', '/v1/account');
+$account = (new Hushscript\Client())->api()->request('GET', '/v1/account');
 if (! isset($account['balance_seconds'])) {
     fwrite(STDERR, "smoke: /v1/account answered without balance_seconds\n");
     exit(1);

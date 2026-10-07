@@ -7,7 +7,6 @@ namespace Hushscript\Tests;
 use Hushscript\Client;
 use Hushscript\Config;
 use Hushscript\Exception\ConfigurationError;
-use Hushscript\Log;
 use Hushscript\SystemClock;
 use Hushscript\Tests\Support\FakeClock;
 use Hushscript\Tests\Support\FakeHttp;
@@ -176,7 +175,7 @@ final class ConfigTest extends TestCase
         yield 'bad log level' => [['log_level' => 'trace']];
         yield 'non string log level' => [['log_level' => 3]];
         yield 'bad clock' => [['clock' => 'now']];
-        yield 'bad http client' => [['http_client' => new \stdClass]];
+        yield 'bad http client' => [['http_client' => new \stdClass()]];
         yield 'unknown option' => [['maxRetries' => 2]];
     }
 
@@ -200,15 +199,14 @@ final class ConfigTest extends TestCase
 
     public function testOptionsAreAccepted(): void
     {
-        $clock = new FakeClock;
-        $http = new FakeHttp;
+        $clock = new FakeClock();
+        $http = new FakeHttp();
         $config = Config::resolve(Tokens::TEST, ['timeout' => 5, 'max_retries' => 0, 'log_level' => 'debug', 'clock' => $clock, 'http_client' => $http], []);
 
         self::assertSame(5.0, $config->timeout);
         self::assertSame(0, $config->maxRetries);
         self::assertSame($clock, $config->clock);
         self::assertSame($http, $config->httpClient);
-        self::assertSame(['off', 'debug'], Log::LEVELS);
     }
 
     public function testTheClientConstructorReportsConfigurationErrors(): void

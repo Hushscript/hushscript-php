@@ -40,7 +40,8 @@ final class Config
         public readonly string $logLevel,
         public readonly Clock $clock,
         public readonly ?ClientInterface $httpClient,
-    ) {}
+    ) {
+    }
 
     /**
      * An explicit option beats its environment variable.
@@ -52,7 +53,7 @@ final class Config
     {
         foreach (array_keys($options) as $name) {
             if (! in_array($name, self::OPTIONS, true)) {
-                throw new ConfigurationError('Unknown option "'.Redact::text((string) $name).'".');
+                throw new ConfigurationError('Unknown option "'.Redact::text($name).'".');
             }
         }
         $resolvedToken = trim($token !== null && $token !== '' ? $token : self::env($env, self::TOKEN_ENV));
@@ -80,11 +81,14 @@ final class Config
         if ($level !== null && ! is_string($level)) {
             throw new ConfigurationError('log_level must be one of '.implode(', ', Log::LEVELS).'.');
         }
-        $level ??= self::env($env, self::LOG_ENV) ?: 'off';
+        if ($level === null) {
+            $fromEnv = self::env($env, self::LOG_ENV);
+            $level = $fromEnv === '' ? 'off' : $fromEnv;
+        }
         if (! in_array($level, Log::LEVELS, true)) {
             throw new ConfigurationError('log_level must be one of '.implode(', ', Log::LEVELS).'.');
         }
-        $clock = $options['clock'] ?? new SystemClock;
+        $clock = $options['clock'] ?? new SystemClock();
         if (! $clock instanceof Clock) {
             throw new ConfigurationError('clock must implement '.Clock::class.'.');
         }
@@ -114,7 +118,8 @@ final class Config
      */
     private static function baseUrl(mixed $option, ?array $env): string
     {
-        $raw = $option ?? (self::env($env, self::BASE_URL_ENV) ?: self::DEFAULT_BASE_URL);
+        $fromEnv = self::env($env, self::BASE_URL_ENV);
+        $raw = $option ?? ($fromEnv === '' ? self::DEFAULT_BASE_URL : $fromEnv);
         if (! is_string($raw)) {
             throw new ConfigurationError('base_url must be a string.');
         }

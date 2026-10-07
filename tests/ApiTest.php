@@ -116,7 +116,7 @@ final class ApiTest extends TestCase
 
     public function testAnUnsupportedMethodIsRefused(): void
     {
-        $rig = new Rig(new FakeHttp);
+        $rig = new Rig(new FakeHttp());
 
         $this->expectException(PreflightError::class);
         $rig->api->request('TRACE', '/v1/account');
@@ -124,7 +124,7 @@ final class ApiTest extends TestCase
 
     public function testABodyThatCannotBeEncodedIsRefusedBeforeAnyRequest(): void
     {
-        $http = new FakeHttp;
+        $http = new FakeHttp();
         $rig = new Rig($http);
 
         try {
