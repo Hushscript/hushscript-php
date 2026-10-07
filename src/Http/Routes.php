@@ -16,6 +16,14 @@ final class Routes
 
     public const SIGNUP = 'signup';
 
+    /** What a caller is told when a claim or rotation went out and its answer is lost (spec 7.4); a lost signup has no hint in v0.1. */
+    public const UNKNOWN_HINTS = [
+        self::CLAIM => 'The claim may have succeeded. Retrying will fail with agent_claim_invalid. '
+            .'If you have no token, contact support with the signup id.',
+        self::ROTATE => 'The old token may already be revoked. Try a request with it; if it fails, '
+            .'the new token was lost and the account needs support.',
+    ];
+
     private const JOB = '/v1/uploads/[^/]+';
 
     private function __construct()

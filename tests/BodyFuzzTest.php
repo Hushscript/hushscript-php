@@ -5,13 +5,21 @@ declare(strict_types=1);
 namespace Hushscript\Tests;
 
 use GuzzleHttp\Psr7\Response;
+use Hushscript\Credentials;
 use Hushscript\Exception\ApiError;
 use Hushscript\Exception\HushscriptException;
+use Hushscript\Exception\OutcomeUnknownError;
+use Hushscript\Http\Body;
+use Hushscript\Http\Exchange;
+use Hushscript\Purchase;
 use Hushscript\Resource\Account;
+use Hushscript\Resource\Agent;
+use Hushscript\Resource\Billing;
 use Hushscript\Resource\Transcripts;
 use Hushscript\Tests\Support\FakeHttp;
 use Hushscript\Tests\Support\PipelineHarness;
 use Hushscript\Tests\Support\Rig;
+use Hushscript\Tests\Support\Tokens;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -48,6 +56,14 @@ final class BodyFuzzTest extends TestCase
             'transcripts page' => [['transcripts' => [$row], 'next_cursor' => null], static fn (Rig $rig): mixed => iterator_to_array((new Transcripts($rig->exchange))->list(), false)],
             'deleted page' => [['deleted' => [$deleted], 'next_cursor' => null], static fn (Rig $rig): mixed => iterator_to_array((new Transcripts($rig->exchange))->deleted(), false)],
             'job' => [PipelineHarness::jobBody('done'), static fn (Rig $rig): mixed => (new \Hushscript\Resource\Jobs($rig->exchange, self::pipeline()))->get('job_1')],
+            'packs' => [['packs' => [['id' => '45min', 'amount' => 599, 'currency' => 'USD', 'seconds' => 2700, 'referral_bonus_seconds' => 0, 'available' => true]]], static fn (Rig $rig): mixed => (new Billing($rig->exchange))->packs()],
+            'cards' => [['default_id' => 'pm_1', 'methods' => [['id' => 'pm_1', 'type' => 'card', 'brand' => 'visa', 'last4' => '4242', 'exp_month' => 1, 'exp_year' => 2030, 'email' => 'a@example.com', 'is_default' => true, 'fast_checkout_eligible' => true]]], static fn (Rig $rig): mixed => (new Billing($rig->exchange))->cards()],
+            'purchase' => [['status' => 'ok', 'balance_seconds' => 100], static fn (Rig $rig): mixed => $rig->exchange->fetch('POST', '/v1/billing/purchase', [], [], static fn (#[\SensitiveParameter] Body $body): Purchase => Purchase::fromApi($body))],
+            'setup session' => [['checkout_url' => 'https://checkout.example.com/s'], static fn (Rig $rig): mixed => (new Billing($rig->exchange))->addCardUrl()],
+            'transactions page' => [['transactions' => [['id' => 1, 'seconds' => 60, 'amount_cents' => 599, 'amount_refunded_cents' => 0, 'currency' => 'usd', 'status' => 'succeeded', 'created_at' => 1760000000, 'payment_method_type' => 'card', 'payment_method_brand' => 'visa', 'payment_method_last4' => '4242', 'receipt_number' => 'R', 'initiated_via' => 'sdk']], 'next_cursor' => null], static fn (Rig $rig): mixed => iterator_to_array((new Billing($rig->exchange))->transactions(), false)],
+            'ledger page' => [['entries' => [['id' => 1, 'delta_seconds' => -60, 'kind' => 'settle', 'job_id' => 'j', 'note' => 'n', 'created_at' => 1760000000]], 'next_cursor' => null], static fn (Rig $rig): mixed => iterator_to_array((new Billing($rig->exchange))->ledger(), false)],
+            'holds page' => [['holds' => [['id' => 'h', 'kind' => 'transcription', 'seconds' => 60, 'created_at' => 1760000000]], 'next_cursor' => null], static fn (Rig $rig): mixed => iterator_to_array((new Billing($rig->exchange))->holds(), false)],
+            'signup' => [['signup_id' => 'sg_1', 'claim_secret' => 'cs_x', 'checkout_url' => 'https://checkout.example.com/p', 'amount' => 599, 'currency' => 'USD', 'expires_at' => 1760001800], static fn (Rig $rig): mixed => Agent::signup($rig->exchange, ['contact_email' => 'a@example.com'])],
             'jobs page' => [['jobs' => [PipelineHarness::jobBody('queued')], 'next_cursor' => null], static fn (Rig $rig): mixed => iterator_to_array((new \Hushscript\Resource\Jobs($rig->exchange, self::pipeline()))->list(), false)],
         ];
     }
@@ -122,7 +138,7 @@ final class BodyFuzzTest extends TestCase
                 $runs++;
             }
         }
-        self::assertGreaterThan(20, $runs);
+        self::assertGreaterThanOrEqual(1 + count(self::MUTATIONS), $runs);
     }
 
     /**
@@ -171,5 +187,45 @@ final class BodyFuzzTest extends TestCase
         }
         $ok = new Rig(new FakeHttp([new Response(200, [], '{"balance_seconds":9223372036854775807,"held_seconds":0}')]));
         self::assertSame(9223372036854775807, (new Account($ok->exchange))->balance()->seconds);
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function credentialRoutes(): iterable
+    {
+        yield 'claim' => ['claim'];
+        yield 'rotate' => ['rotate'];
+    }
+
+    /**
+     * A claim or rotation answer that cannot be used is a lost credential, not bad_response (spec 7.4): whatever
+     * one field holds, the call succeeds or raises `OutcomeUnknownError`, and the token the answer carried is kept.
+     */
+    #[DataProvider('credentialRoutes')]
+    public function testAMutatedCredentialAnswerIsASuccessOrAnUnknownOutcomeNeverAnythingElse(string $route): void
+    {
+        $token = 'hsr1:eu:pat.'.str_repeat('a', 32).'.'.str_repeat('b', 64);
+        $body = $route === 'claim'
+            ? ['user_id' => 'u', 'pat' => $token, 'scopes' => ['a'], 'balance_seconds' => 5]
+            : ['pat' => $token, 'pat_id' => 'p', 'scopes' => ['a'], 'expires_at' => 1760000000];
+        $runs = 0;
+        foreach (self::paths($body) as $path) {
+            $texts = [json_encode(self::with($body, $path, null), JSON_THROW_ON_ERROR)];
+            foreach (self::MUTATIONS as $mutation) {
+                $texts[] = str_replace(self::SENTINEL, $mutation, json_encode(self::with($body, $path, '__mutation__'), JSON_THROW_ON_ERROR));
+            }
+            foreach ($texts as $text) {
+                $credentials = new Credentials(Tokens::TEST);
+                $exchange = new Exchange(new FakeHttp([new Response(200, [], $text)]), $credentials, Rig::BASE);
+                try {
+                    $route === 'claim'
+                        ? Agent::claim($exchange, $credentials, '/v1/agent/accounts/sg_1/claim', 'cs_0123456789abcdef')
+                        : (new Agent($exchange, $credentials))->rotateToken();
+                } catch (OutcomeUnknownError $error) {
+                    self::assertStringNotContainsString($token, print_r($error, true).$error->getMessage(), $text);
+                }
+                $runs++;
+            }
+        }
+        self::assertGreaterThanOrEqual(1 + count(self::MUTATIONS), $runs);
     }
 }

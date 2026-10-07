@@ -31,6 +31,9 @@ final class Config
 
     private const OPTIONS = ['base_url', 'timeout', 'max_retries', 'log_level', 'clock', 'http_client', 'part_transport'];
 
+    // What a call that needs no token takes: signup and claim are never retried and upload nothing.
+    private const TOKENLESS_OPTIONS = ['base_url', 'timeout', 'log_level', 'clock', 'http_client'];
+
     private const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 
     private function __construct(
@@ -70,6 +73,42 @@ final class Config
             throw new ConfigurationError("This doesn't look like a Hushscript token.");
         }
 
+        return self::finish(new Credentials($resolvedToken), $options, $env);
+    }
+
+    /**
+     * The configuration of a call that needs no token (agent signup and claim): HUSHSCRIPT_TOKEN is neither read
+     * nor sent, and the options are the ones such a call can use.
+     *
+     * @param  array<string, mixed>  $options  base_url, timeout, log_level, clock, http_client
+     * @param  array<string, string>|null  $env  defaults to the process environment
+     */
+    public static function tokenless(#[\SensitiveParameter] array $options = [], #[\SensitiveParameter] ?array $env = null): self
+    {
+        foreach (array_keys($options) as $name) {
+            if (! in_array($name, self::TOKENLESS_OPTIONS, true)) {
+                throw new ConfigurationError('Unknown option "'.Redact::text($name).'".');
+            }
+        }
+
+        return self::finish(new Credentials(''), $options, $env);
+    }
+
+    /**
+     * Whether a string is a token the client may send: printable ASCII only and the `hsr` prefix. The check every
+     * token passes, at construction and after a rotation.
+     */
+    public static function acceptableToken(#[\SensitiveParameter] string $token): bool
+    {
+        return preg_match('/^[\x21-\x7E]+$/D', $token) === 1 && str_starts_with($token, 'hsr');
+    }
+
+    /**
+     * @param  array<string, mixed>  $options
+     * @param  array<string, string>|null  $env
+     */
+    private static function finish(Credentials $credentials, #[\SensitiveParameter] array $options, #[\SensitiveParameter] ?array $env): self
+    {
         $baseUrl = self::baseUrl($options['base_url'] ?? null, $env);
         $timeout = $options['timeout'] ?? self::DEFAULT_TIMEOUT;
         if (! (is_int($timeout) || is_float($timeout)) || ! is_finite((float) $timeout) || $timeout <= 0) {
@@ -104,7 +143,7 @@ final class Config
             throw new ConfigurationError('part_transport must implement '.PartTransport::class.'.');
         }
 
-        return new self(new Credentials($resolvedToken), $baseUrl, (float) $timeout, $maxRetries, $level, $clock, $httpClient, $partTransport);
+        return new self($credentials, $baseUrl, (float) $timeout, $maxRetries, $level, $clock, $httpClient, $partTransport);
     }
 
     /**

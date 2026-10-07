@@ -4,19 +4,17 @@ declare(strict_types=1);
 
 namespace Hushscript;
 
-use GuzzleHttp\Client as GuzzleClient;
-use Hushscript\Http\Exchange;
-use Hushscript\Http\RetryMiddleware;
 use Hushscript\Http\RetryPolicy;
-use Hushscript\Http\WaitTicker;
+use Hushscript\Http\Stack;
 use Hushscript\Resource\Account as AccountResource;
+use Hushscript\Resource\Agent;
+use Hushscript\Resource\Billing;
 use Hushscript\Resource\Jobs;
 use Hushscript\Resource\Transcripts;
 use Hushscript\Transcribe\GuzzleMultiTransport;
 use Hushscript\Transcribe\PartTransport;
 use Hushscript\Transcribe\Pipeline;
 use Hushscript\Transcribe\SyncTransport;
-use Psr\Http\Client\ClientInterface;
 
 /**
  * Entry point of the SDK. The token never appears in any representation of this object.
@@ -35,6 +33,10 @@ final class Client
 
     private readonly AccountResource $accountResource;
 
+    private readonly Billing $billing;
+
+    private readonly Agent $agent;
+
     /**
      * @param  array<string, mixed>  $options  base_url, timeout, max_retries, log_level, clock, http_client (a PSR-18 client), part_transport (advanced: how part uploads are sent)
      *
@@ -43,21 +45,9 @@ final class Client
     public function __construct(#[\SensitiveParameter] ?string $token = null, #[\SensitiveParameter] array $options = [])
     {
         $this->config = Config::resolve($token, $options);
-        $log = new Log($this->config->logLevel);
-        $inner = $this->config->httpClient === null
-            ? self::defaultHttpClient($this->config->timeout)
-            : self::withoutRedirects($this->config->httpClient, $log);
-        $ticker = new WaitTicker();
-        $transport = new RetryMiddleware(
-            $inner,
-            $this->config->credentials,
-            $this->config->baseUrl,
-            $this->config->clock,
-            $log,
-            $this->config->maxRetries,
-            ticker: $ticker,
-        );
-        $exchange = new Exchange($transport, $this->config->credentials, $this->config->baseUrl);
+        $stack = Stack::build($this->config);
+        $exchange = $stack->exchange;
+        $inner = $stack->inner;
         $this->api = new Api($exchange);
         $config = $this->config;
         $this->pipeline = new Pipeline(
@@ -65,16 +55,18 @@ final class Client
             $config->credentials,
             $config->baseUrl,
             $config->clock,
-            $log,
+            $stack->log,
             $config->maxRetries,
             static fn (): PartTransport => $config->partTransport
                 ?? ($config->httpClient === null && GuzzleMultiTransport::available() ? new GuzzleMultiTransport($config->timeout) : new SyncTransport($inner)),
             RetryPolicy::fullJitter(...),
-            $ticker,
+            $stack->ticker,
         );
         $this->jobs = new Jobs($exchange, $this->pipeline);
         $this->transcripts = new Transcripts($exchange);
         $this->accountResource = new AccountResource($exchange);
+        $this->billing = new Billing($exchange);
+        $this->agent = new Agent($exchange, $config->credentials);
     }
 
     public function api(): Api
@@ -142,56 +134,62 @@ final class Client
         return $this->accountResource->account();
     }
 
+    public function billing(): Billing
+    {
+        return $this->billing;
+    }
+
+    /** The calls an agent account makes with its own token: `rotateToken()`. */
+    public function agent(): Agent
+    {
+        return $this->agent;
+    }
+
     /**
-     * Redirects are never followed (R55). A client that can be reconfigured, like Symfony's
-     * HttpClient, is told so; any other client must already behave that way (README). The method is
-     * called only when it is public and takes one array (or untyped) argument; anything else, or a
-     * failure, leaves the client as it is, because a foreign client's quirks never break construction.
+     * Buys a minute pack with the saved card; it is `billing()->buy()`. `$acknowledgeNoRefund` records that the
+     * no-refund notice was shown to the buyer. Every error raised after the purchase request was sent carries
+     * `idempotencyKey`: pass it back as `$idempotencyKey` to ask again with no chance of a second charge.
+     *
+     * @throws \Hushscript\Exception\HushscriptException
      */
-    private static function withoutRedirects(ClientInterface $client, Log $log): ClientInterface
+    public function buy(string $pack, bool $acknowledgeNoRefund = false, ?string $idempotencyKey = null): Purchase
     {
-        if (! self::acceptsOptions($client)) {
-            return $client;
-        }
-        try {
-            $configured = $client->withOptions(['max_redirects' => 0]); // @phpstan-ignore method.notFound
-        } catch (\Throwable $failure) {
-            $log->note('withOptions() failed ('.$failure::class.'); the HTTP client is used as it is');
-
-            return $client;
-        }
-
-        return $configured instanceof ClientInterface ? $configured : $client;
+        return $this->billing->buy($pack, $acknowledgeNoRefund, $idempotencyKey);
     }
 
-    private static function acceptsOptions(ClientInterface $client): bool
+    /**
+     * Opens an agent account. It needs no token (HUSHSCRIPT_TOKEN is not read or sent): the agent then has the
+     * checkout paid at `checkoutUrl` and claims the account with `agentClaim()`. `accept_terms`, the policy version
+     * being accepted, is never defaulted. The request is never retried; a lost answer is an `OutcomeUnknownError`.
+     *
+     * @param  array<string, mixed>  $request  email, pack, accept_terms, agent (name, platform, contact_url), data_region, dry_run
+     * @param  array<string, mixed>  $options  base_url, timeout, log_level, clock, http_client
+     *
+     * @throws \Hushscript\Exception\HushscriptException
+     */
+    public static function agentSignup(#[\SensitiveParameter] array $request, array $options = []): AgentSignup
     {
-        if (! method_exists($client, 'withOptions')) {
-            return false;
-        }
-        try {
-            $method = new \ReflectionMethod($client, 'withOptions');
-        } catch (\ReflectionException) {
-            return false;
-        }
-        if (! $method->isPublic() || $method->isStatic() || $method->getNumberOfRequiredParameters() !== 1) {
-            return false;
-        }
-        $type = $method->getParameters()[0]->getType();
+        $body = Agent::signupBody($request);
 
-        return $type === null || ($type instanceof \ReflectionNamedType && in_array($type->getName(), ['array', 'mixed'], true));
+        return Agent::signup(Stack::build(Config::tokenless($options))->exchange, $body);
     }
 
-    private static function defaultHttpClient(float $timeout): ClientInterface
+    /**
+     * Claims a paid agent signup and returns the account's token, which the server shows once: write it down before
+     * doing anything else. It answers `wrong_state` (a `ConflictError`) until the checkout is paid, and is never
+     * retried: a lost answer, or one without a usable token, is an `OutcomeUnknownError` whose hint says what to
+     * check and whose `receivedToken()` holds any token the answer carried.
+     *
+     * @param  array<string, mixed>  $options  base_url, timeout, log_level, clock, http_client
+     *
+     * @throws \Hushscript\Exception\HushscriptException
+     */
+    public static function agentClaim(string $signupId, #[\SensitiveParameter] string $claimSecret, array $options = []): AgentAccount
     {
-        // Redirects are never followed and 4xx/5xx come back as responses: the SDK's transport
-        // decides what to retry and builds the typed error.
-        return new GuzzleClient([
-            'timeout' => $timeout,
-            'connect_timeout' => $timeout,
-            'allow_redirects' => false,
-            'http_errors' => false,
-        ]);
+        $path = Agent::claimPath($signupId);
+        $config = Config::tokenless($options);
+
+        return Agent::claim(Stack::build($config)->exchange, $config->credentials, $path, $claimSecret);
     }
 
     /** @return array<string, string> */

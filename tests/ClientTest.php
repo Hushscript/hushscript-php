@@ -154,7 +154,7 @@ final class ClientTest extends TestCase
         $log = new \Hushscript\Log('debug', static function (string $line) use ($stderr): void {
             fwrite($stderr, $line."\n");
         });
-        $method = new \ReflectionMethod(Client::class, 'withoutRedirects');
+        $method = new \ReflectionMethod(\Hushscript\Http\Stack::class, 'withoutRedirects');
         $method->invoke(null, $http, $log);
 
         rewind($stderr);
