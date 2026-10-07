@@ -57,7 +57,7 @@ final class FakeHttp implements ClientInterface
     }
 
     /**
-     * @param  array<string, mixed>|string  $body
+     * @param  array<mixed>|string  $body
      * @param  array<string, string>  $headers
      */
     public static function json(int $status, array|string $body = [], array $headers = []): Response
