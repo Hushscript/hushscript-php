@@ -22,8 +22,8 @@ use Hushscript\Tests\Support\FakeIdleClock;
 use Hushscript\Tests\Support\PipelineHarness;
 use Hushscript\Transcribe\PartFailure;
 use Hushscript\Transcribe\Resume;
-use PHPUnit\Framework\Attributes\DataProvider;
 use Hushscript\Transcript;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\RequestInterface;
 

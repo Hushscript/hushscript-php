@@ -25,13 +25,12 @@ namespace Hushscript\Conformance;
 
 use GuzzleHttp\Client as Http;
 use Hushscript\Client;
-use Hushscript\Transcript;
 use Hushscript\Exception\HushscriptException;
-use Hushscript\Http\Body;
 use Hushscript\IdleClock;
 use Hushscript\Transcribe\Probe;
 use Hushscript\Transcribe\Sniff;
 use Hushscript\Transcribe\Source;
+use Hushscript\Transcript;
 
 require __DIR__.'/../vendor/autoload.php';
 require __DIR__.'/goldens.php';

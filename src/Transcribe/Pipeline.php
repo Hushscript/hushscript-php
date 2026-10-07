@@ -8,13 +8,13 @@ use Hushscript\Clock;
 use Hushscript\Credentials;
 use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\NotFoundError;
-use Hushscript\Http\Exchange;
 use Hushscript\Http\Body;
+use Hushscript\Http\Exchange;
 use Hushscript\Http\WaitTicker;
 use Hushscript\Job;
-use Hushscript\Transcript;
 use Hushscript\Log;
 use Hushscript\Secret;
+use Hushscript\Transcript;
 
 /**
  * The transcribe pipeline (spec 8): preflight, create, parts, heartbeat, complete, wait and fetch,

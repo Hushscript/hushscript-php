@@ -6,14 +6,14 @@ namespace Hushscript\Transcribe;
 
 use Hushscript\Clock;
 use Hushscript\Exception\JobFailedError;
-use Hushscript\Http\BadBody;
-use Hushscript\Http\Body;
-use Hushscript\Job;
-use Hushscript\Transcript;
 use Hushscript\Exception\UploadError;
 use Hushscript\Exception\WaitTimeoutError;
+use Hushscript\Http\BadBody;
+use Hushscript\Http\Body;
 use Hushscript\Http\Exchange;
+use Hushscript\Job;
 use Hushscript\Secret;
+use Hushscript\Transcript;
 
 /**
  * Polls a job and fetches its transcript (spec 8.6).

@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace Hushscript\Tests\Transcribe;
 
 use GuzzleHttp\Promise\PromiseInterface;
+use Hushscript\Credentials;
 use Hushscript\Exception\ConflictError;
 use Hushscript\Exception\ErrorMapper;
 use Hushscript\Exception\HushscriptException;
 use Hushscript\Hint;
-use Hushscript\Credentials;
 use Hushscript\Tests\Support\FakeClock;
 use Hushscript\Tests\Support\FakeHttp;
 use Hushscript\Tests\Support\PipelineHarness;
@@ -22,7 +22,7 @@ final class UnexpectedFailureTest extends TestCase
 {
     private static function throwingTransport(\Closure $make): PartTransport
     {
-        return new class($make) implements PartTransport {
+        return new class ($make) implements PartTransport {
             public function __construct(private readonly \Closure $make)
             {
             }
