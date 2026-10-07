@@ -24,7 +24,7 @@ final class Jobs
     /**
      * Every job, newest first, fetching pages as it goes; `active` keeps only the jobs that have not finished.
      *
-     * @param  array{active?: bool}  $options
+     * @param  array<string, mixed>  $options  `active` (a bool) is the only key
      * @return \Generator<int, Job>
      *
      * @throws \Hushscript\Exception\HushscriptException

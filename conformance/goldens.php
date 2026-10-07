@@ -94,7 +94,8 @@ final class Goldens
     public static function drift(string $conformanceDir): array
     {
         $expected = array_map(static fn (Golden $golden): string => $golden->file, self::all());
-        $found = array_values(array_diff((array) scandir($conformanceDir.'/fixtures/exports'), ['.', '..']));
+        $listing = scandir($conformanceDir.'/fixtures/exports');
+        $found = array_values(array_diff($listing === false ? [] : $listing, ['.', '..']));
 
         return ['missing' => array_values(array_diff($expected, $found)), 'extra' => array_values(array_diff($found, $expected))];
     }

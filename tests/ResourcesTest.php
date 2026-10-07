@@ -89,7 +89,13 @@ final class ResourcesTest extends TestCase
         }
 
         self::assertSame(['tr_001', 'tr_002', 'tr_003', 'tr_004'], $ids);
-        self::assertSame(['limit=2', 'cursor=c2&limit=2', 'cursor=c3&limit=2'], array_map(static fn ($r): string => self::sorted($r->getUri()->getQuery()), $http->requests));
+        self::assertSame(['limit=2', 'cursor=c2&limit=2', 'cursor=c3&limit=2'], self::queries($http));
+    }
+
+    /** @return list<string> */
+    private static function queries(FakeHttp $http): array
+    {
+        return array_map(static fn (\Psr\Http\Message\RequestInterface $request): string => self::sorted($request->getUri()->getQuery()), $http->requests);
     }
 
     private static function sorted(string $query): string
@@ -113,6 +119,7 @@ final class ResourcesTest extends TestCase
     public function testACursorEqualToTheOneJustSentIsAPaginationLoopAfterItsItemsWereYielded(): void
     {
         $http = new FakeHttp([self::page([self::row(1)], 'same'), self::page([self::row(2)], 'same')]);
+        /** @var list<string> $seen */
         $seen = [];
 
         try {

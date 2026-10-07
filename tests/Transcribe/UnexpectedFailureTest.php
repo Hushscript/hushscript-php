@@ -20,9 +20,11 @@ use Psr\Http\Message\RequestInterface;
 
 final class UnexpectedFailureTest extends TestCase
 {
+    /** @param \Closure(): \Throwable $make */
     private static function throwingTransport(\Closure $make): PartTransport
     {
         return new class ($make) implements PartTransport {
+            /** @param \Closure(): \Throwable $make */
             public function __construct(private readonly \Closure $make)
             {
             }

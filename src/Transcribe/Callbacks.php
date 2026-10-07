@@ -19,7 +19,10 @@ final class Callbacks
     }
 
     /**
-     * @param  \Closure(mixed): void  $callback
+     * @template T
+     *
+     * @param  \Closure(T): void  $callback
+     * @param  T  $argument
      */
     public function call(\Closure $callback, #[\SensitiveParameter] mixed $argument): void
     {

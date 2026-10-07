@@ -152,6 +152,11 @@ final class PipelineTest extends TestCase
         return new Response(500);
     }
 
+    private static function firstHandedOut(): ?string
+    {
+        return self::$handedOut->getArrayCopy()[0] ?? null;
+    }
+
     private static function partNumber(string $url): int
     {
         preg_match('~/(\d+)(?:\?|$)~', $url, $match);
@@ -813,7 +818,7 @@ final class PipelineTest extends TestCase
             $harness->parts->sent = [];
             $harness->api->requests = [];
             $surface = self::surface($error);
-            $token = self::$handedOut->getArrayCopy()[0] ?? null;
+            $token = self::firstHandedOut();
             self::assertIsString($token, 'the create succeeded, so a resume token was handed out');
             foreach (['X-Amz-Signature', 'SECRET', 'r2.example.com', \Hushscript\Tests\Support\Tokens::TEST, $token] as $needle) {
                 $at = strpos($surface, $needle);

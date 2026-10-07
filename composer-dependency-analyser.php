@@ -13,6 +13,8 @@ return (new Configuration())
     ->addPathToScan(__DIR__.'/smoke', true)
     // The Override attribute is a PHP 8.3 builtin; on 8.2 it is an ignored unknown attribute class.
     ->ignoreUnknownClasses(['Override'])
+    // The runner's golden table is a script the golden test loads with require, as the runner does.
+    ->ignoreUnknownClasses(['Hushscript\\Conformance\\Golden', 'Hushscript\\Conformance\\Goldens'])
     // The generator is a script that the tests load with require; its functions are not autoloadable.
     ->ignoreUnknownFunctions([
         'Hushscript\\Scripts\\emitCatalog',

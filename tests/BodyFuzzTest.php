@@ -38,7 +38,7 @@ final class BodyFuzzTest extends TestCase
         $row = ['id' => 'tr_1', 'title' => 'T', 'language_detected' => 'en', 'duration_seconds' => 30, 'created_at' => 1760000000, 'auto_delete_at' => 1770000000, 'tags' => ['a']];
         $deleted = ['id' => 'tr_1', 'title' => 'T', 'duration_seconds' => 30, 'created_at' => 1760000000, 'deleted_at' => 1760000100, 'cause' => 'manual', 'receipt' => ['k' => 'v']];
         $transcript = PipelineHarness::transcriptBody();
-        $transcript['body']['translations'] = ['es' => ['utterances' => [['speaker' => 'A', 'start_ms' => 1.5, 'end_ms' => 2000, 'text' => 'hola']]]];
+        $transcript['body'] = [...(array) $transcript['body'], 'translations' => ['es' => ['utterances' => [['speaker' => 'A', 'start_ms' => 1.5, 'end_ms' => 2000, 'text' => 'hola']]]]];
         $transcript['speaker_names'] = ['A' => 'Dana', '0' => 'Zero'];
 
         return [
@@ -59,6 +59,7 @@ final class BodyFuzzTest extends TestCase
 
     /**
      * @param  array<mixed>  $value
+     * @param  list<string|int>  $prefix
      * @return list<list<string|int>>
      */
     private static function paths(array $value, array $prefix = []): array

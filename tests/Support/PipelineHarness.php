@@ -87,7 +87,6 @@ final class PipelineHarness
 
     /**
      * @param  array<string, mixed>  $options
-     * @return array<string, mixed>
      */
     public function jobsWait(string $id, array $options): \Hushscript\Job
     {

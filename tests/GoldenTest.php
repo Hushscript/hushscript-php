@@ -39,7 +39,8 @@ final class GoldenTest extends TestCase
         $result = $expect['result'] ?? null;
         self::assertIsArray($result);
 
-        self::assertSame($result['checked'], count(Goldens::all()), 'the scenario counts the same goldens as the table');
+        self::assertIsInt($result['checked']);
+        self::assertCount($result['checked'], Goldens::all(), 'the scenario counts the same goldens as the table');
         self::assertSame(['missing' => [], 'extra' => []], Goldens::drift(Conformance::dir()), 'a golden that is missing, renamed or added fails here');
     }
 }

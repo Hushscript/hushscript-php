@@ -70,42 +70,46 @@ final class Captions
         if ($words === []) {
             return [''];
         }
-        $cues = [];
-        $lines = [];
-        $line = '';
-        $lineLength = 0;
-        $flushLine = static function () use (&$lines, &$line, &$lineLength): void {
-            if ($line !== '') {
-                $lines[] = $line;
-            }
-            $line = '';
-            $lineLength = 0;
-        };
-        $flushCue = static function () use (&$cues, &$lines, $flushLine): void {
-            $flushLine();
-            if ($lines !== []) {
-                $cues[] = implode("\n", $lines);
-            }
-            $lines = [];
-        };
+        $state = ['cues' => [], 'lines' => [], 'line' => '', 'length' => 0];
         foreach ($words as $word) {
             $wordLength = Time::length($word);
-            $candidateLength = $line !== '' ? $lineLength + 1 + $wordLength : $wordLength;
+            $candidateLength = $state['line'] !== '' ? $state['length'] + 1 + $wordLength : $wordLength;
             if ($candidateLength <= self::MAX_CHARS) {
-                $line = $line !== '' ? $line.' '.$word : $word;
-                $lineLength = $candidateLength;
+                $state['line'] = $state['line'] !== '' ? $state['line'].' '.$word : $word;
+                $state['length'] = $candidateLength;
 
                 continue;
             }
-            $flushLine();
-            if (count($lines) >= self::MAX_LINES) {
-                $flushCue();
+            self::flushLine($state);
+            if (count($state['lines']) >= self::MAX_LINES) {
+                self::flushCue($state);
             }
-            $line = $word;
-            $lineLength = $wordLength;
+            $state['line'] = $word;
+            $state['length'] = $wordLength;
         }
-        $flushCue();
+        self::flushCue($state);
+        $cues = $state['cues'];
 
         return $cues === [] ? [''] : $cues;
+    }
+
+    /** @param array{cues: list<string>, lines: list<string>, line: string, length: int} $state */
+    private static function flushLine(array &$state): void
+    {
+        if ($state['line'] !== '') {
+            $state['lines'][] = $state['line'];
+        }
+        $state['line'] = '';
+        $state['length'] = 0;
+    }
+
+    /** @param array{cues: list<string>, lines: list<string>, line: string, length: int} $state */
+    private static function flushCue(array &$state): void
+    {
+        self::flushLine($state);
+        if ($state['lines'] !== []) {
+            $state['cues'][] = implode("\n", $state['lines']);
+        }
+        $state['lines'] = [];
     }
 }

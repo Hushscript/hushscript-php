@@ -40,9 +40,9 @@ final class Transcripts
     }
 
     /**
-     * One page of `list()`; `cursor` is a previous page's `nextCursor`.
+     * One page of `list()`; `cursor` (a string) is a previous page's `nextCursor`, `page_size` a whole number of 1 or more.
      *
-     * @param  array{cursor?: string|null, page_size?: int|null}  $options
+     * @param  array<string, mixed>  $options
      * @return Page<TranscriptSummary>
      *
      * @throws \Hushscript\Exception\HushscriptException
