@@ -171,7 +171,7 @@ final class ApiTest extends TestCase
         sort($methods);
 
         self::assertSame(['__construct', '__serialize', '__unserialize', 'request'], $methods, 'requestOrNull and the exchange are not part of the public surface');
-        self::assertFalse(method_exists(\Hushscript\Api::class, 'requestOrNull'));
+        self::assertFalse((new \ReflectionClass(\Hushscript\Api::class))->hasMethod('requestOrNull'));
         $client = new \Hushscript\Client(\Hushscript\Tests\Support\Tokens::TEST);
         self::assertSame([], get_object_vars($client->api()), 'no property of the Api reaches the exchange from outside');
         self::assertStringContainsString('@internal', (string) (new \ReflectionClass(\Hushscript\Http\Exchange::class))->getDocComment());

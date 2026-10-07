@@ -89,7 +89,7 @@ final class PipelineHarness
      * @param  array<string, mixed>  $options
      * @return array<string, mixed>
      */
-    public function jobsWait(string $id, array $options): array
+    public function jobsWait(string $id, array $options): \Hushscript\Job
     {
         return $this->pipeline->wait($id, $options);
     }
@@ -138,6 +138,53 @@ final class PipelineHarness
         return FakeHttp::json($status, $body);
     }
 
+    /**
+     * A job as `GET /v1/jobs/{id}` sends it, with every field of the public `Job`.
+     *
+     * @param  array<string, mixed>  $changes
+     * @return array<string, mixed>
+     */
+    public static function jobBody(string $state = 'done', array $changes = []): array
+    {
+        return [...[
+            'id' => self::JOB,
+            'state' => $state,
+            'mode' => 'standard',
+            'transcript_id' => $state === 'done' ? 'tr_1' : null,
+            'error' => null,
+            'failure_kind' => null,
+            'retry_of' => null,
+            'declared_seconds' => 20,
+            'verified_seconds' => null,
+            'actual_seconds' => null,
+            'billable_seconds' => null,
+            'created_at' => 1760000000,
+            'options' => ['language_code' => null, 'speaker_detection' => true, 'medical_mode' => false, 'multichannel' => false, 'translation_targets' => [], 'keyterms' => false, 'prompt' => false, 'auto_generate_insights' => null],
+        ], ...$changes];
+    }
+
+    /**
+     * A transcript as `GET /v1/transcripts/{id}` sends it.
+     *
+     * @return array<string, mixed>
+     */
+    public static function transcriptBody(string $id = 'tr_1'): array
+    {
+        return [
+            'id' => $id,
+            'title' => 'Call',
+            'language_detected' => 'en',
+            'duration_seconds' => 20,
+            'speaker_names' => ['A' => 'Dana'],
+            'tags' => [],
+            'created_at' => 1760000000,
+            'updated_at' => 1760000100,
+            'auto_delete_at' => null,
+            'edited' => false,
+            'body' => ['original' => ['utterances' => [['speaker' => 'A', 'start_ms' => 0, 'end_ms' => 1000, 'text' => 'hello']]], 'translations' => new \stdClass()],
+        ];
+    }
+
     /** The routes of a happy path; add routes over them, the latest wins. */
     private function defaults(): void
     {
@@ -147,7 +194,7 @@ final class PipelineHarness
             ->on('POST', '/v1/uploads/[^/]+/heartbeat', fn (): Response => self::json(200, ['ok' => true]))
             ->on('POST', '/v1/uploads/[^/]+/complete', fn (): Response => self::json(200, ['ok' => true, 'state' => 'queued']))
             ->on('PUT', '/v1/uploads/[^/]+/parts/\d+', fn (): Response => self::json(200, ['ok' => true]))
-            ->on('GET', '/v1/jobs/[^/]+', fn (): Response => self::json(200, ['id' => self::JOB, 'state' => 'done', 'transcript_id' => 'tr_1']))
-            ->on('GET', '/v1/transcripts/tr_1', fn (): Response => self::json(200, ['id' => 'tr_1', 'utterances' => [['text' => 'hello']]]));
+            ->on('GET', '/v1/jobs/[^/]+', fn (): Response => self::json(200, self::jobBody()))
+            ->on('GET', '/v1/transcripts/tr_1', fn (): Response => self::json(200, self::transcriptBody()));
     }
 }

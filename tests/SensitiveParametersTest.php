@@ -25,8 +25,12 @@ final class SensitiveParametersTest extends TestCase
         yield 'Exchange::queryString query' => [\Hushscript\Http\Exchange::class, 'queryString', 'query'];
         yield 'RetryMiddleware::transmit outgoing' => [\Hushscript\Http\RetryMiddleware::class, 'transmit', 'outgoing'];
         // Methods that take an API body, a response or a failure that may quote a signed URL: a body is data of the account.
-        yield 'Shape::record value' => [\Hushscript\Transcribe\Shape::class, 'record', 'value'];
-        yield 'Pipeline::toTranscript body' => [\Hushscript\Transcribe\Pipeline::class, 'toTranscript', 'body'];
+        yield 'Body::of value' => [\Hushscript\Http\Body::class, 'of', 'value'];
+        yield 'Transcript::fromApi body' => [\Hushscript\Transcript::class, 'fromApi', 'body'];
+        yield 'Job::fromApi job' => [\Hushscript\Job::class, 'fromApi', 'job'];
+        yield 'Account::fromApi account' => [\Hushscript\Account::class, 'fromApi', 'account'];
+        yield 'Balance::fromApi account' => [\Hushscript\Balance::class, 'fromApi', 'account'];
+        yield 'Exchange::fetch body' => [\Hushscript\Http\Exchange::class, 'fetch', 'body'];
         yield 'Pipeline::finish first' => [\Hushscript\Transcribe\Pipeline::class, 'finish', 'first'];
         yield 'Wait::until first' => [\Hushscript\Transcribe\Wait::class, 'until', 'first'];
         yield 'Wait::transcriptId job' => [\Hushscript\Transcribe\Wait::class, 'transcriptId', 'job'];

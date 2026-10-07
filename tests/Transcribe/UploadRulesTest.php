@@ -14,6 +14,7 @@ use Hushscript\Tests\Support\PipelineHarness;
 use Hushscript\Transcribe\Heartbeat;
 use Hushscript\Transcribe\SyncTransport;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Hushscript\Transcript;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
@@ -24,9 +25,8 @@ final class UploadRulesTest extends TestCase
 {
     /**
      * @param  array<string, mixed>  $options
-     * @return array<string, mixed>
      */
-    private static function go(PipelineHarness $harness, array $options = []): array
+    private static function go(PipelineHarness $harness, array $options = []): Transcript
     {
         return $harness->pipeline->transcribe($harness->path(), $options);
     }

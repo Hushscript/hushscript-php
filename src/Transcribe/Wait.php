@@ -6,6 +6,10 @@ namespace Hushscript\Transcribe;
 
 use Hushscript\Clock;
 use Hushscript\Exception\JobFailedError;
+use Hushscript\Http\BadBody;
+use Hushscript\Http\Body;
+use Hushscript\Job;
+use Hushscript\Transcript;
 use Hushscript\Exception\UploadError;
 use Hushscript\Exception\WaitTimeoutError;
 use Hushscript\Http\Exchange;
@@ -28,15 +32,34 @@ final class Wait
     {
     }
 
-    /** @return array<string, mixed> */
-    public static function job(Exchange $api, string $jobId): array
+    /**
+     * One read of a job. The polling reads only the fields it acts on, so a body that lacks a field the
+     * public `Job` has is still a usable poll; `$full` also holds it to the whole `Job` shape.
+     *
+     * @return array<string, mixed>
+     */
+    public static function job(Exchange $api, string $jobId, bool $full = false): array
     {
-        $body = Shape::record($api->request('GET', '/v1/jobs/'.Shape::segment($jobId, 'job id')), 'a job');
-        if (! is_string($body['state'] ?? null)) {
-            throw Shape::bad('a job without a state');
-        }
+        return $api->fetch('GET', '/v1/jobs/'.Shape::segment($jobId, 'job id'), [], null, static function (Body $body) use ($full): array {
+            $body->string('state');
+            $body->nullableString('transcript_id');
+            $body->nullableString('error');
+            $body->nullableString('failure_kind');
+            if ($body->has('id')) {
+                $body->string('id');
+            }
+            // An id the server sends for the transcript goes into a URL path: one that cannot is an unusable body.
+            $transcript = $body->nullableString('transcript_id');
+            if ($transcript === '.' || $transcript === '..') {
+                throw new BadBody('response.transcript_id: expected an id');
+            }
+            if ($full) {
+                Job::fromApi($body);
+            }
 
-        return $body;
+            /** @var array<string, mixed> */
+            return $body->raw();
+        });
     }
 
     /**
@@ -48,12 +71,12 @@ final class Wait
      * @param  (\Closure(array<string, mixed>): void)|null  $onProgress
      * @return array<string, mixed>
      */
-    public static function until(Exchange $api, Clock $clock, string $jobId, float $waitTimeout, ?\Closure $onProgress, ?Secret $token, #[\SensitiveParameter] ?array $first = null): array
+    public static function until(Exchange $api, Clock $clock, string $jobId, float $waitTimeout, ?\Closure $onProgress, ?Secret $token, #[\SensitiveParameter] ?array $first = null, bool $full = false): array
     {
         $started = $clock->now();
         $delay = self::FIRST_DELAY;
         while (true) {
-            $job = $first ?? self::job($api, $jobId);
+            $job = $first ?? self::job($api, $jobId, $full);
             $first = null;
             $state = is_string($job['state']) ? $job['state'] : '';
             if (in_array($state, self::TERMINAL, true)) {
@@ -105,9 +128,8 @@ final class Wait
         return $transcript;
     }
 
-    /** @return array<string, mixed> */
-    public static function transcript(Exchange $api, string $transcriptId): array
+    public static function transcript(Exchange $api, string $transcriptId): Transcript
     {
-        return Shape::record($api->request('GET', '/v1/transcripts/'.Shape::segment($transcriptId, 'transcript id')), 'a transcript');
+        return $api->fetch('GET', '/v1/transcripts/'.Shape::segment($transcriptId, 'transcript id'), [], null, static fn (Body $body): Transcript => Transcript::fromApi($body));
     }
 }

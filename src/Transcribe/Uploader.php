@@ -16,6 +16,7 @@ use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\NetworkError;
 use Hushscript\Exception\UploadError;
 use Hushscript\Http\Exchange;
+use Hushscript\Http\Body;
 use Hushscript\Http\Outcome;
 use Hushscript\Http\RetryClass;
 use Hushscript\Http\RetryPolicy;
@@ -225,10 +226,10 @@ final class Uploader
         try {
             $uri = new Uri($run->url?->reveal() ?? '');
         } catch (\InvalidArgumentException) {
-            throw Shape::bad('an upload URL');
+            throw Shape::bad('an upload URL', $this->plan->status);
         }
         if (! in_array(strtolower($uri->getScheme()), ['http', 'https'], true) || $uri->getHost() === '') {
-            throw Shape::bad('an upload URL');
+            throw Shape::bad('an upload URL', $this->plan->status);
         }
 
         return new Request('PUT', $uri, ['User-Agent' => self::agent()], Psr7::streamFor($run->data));
@@ -454,8 +455,7 @@ final class Uploader
      */
     private function fetch(int $start, bool $advance): void
     {
-        $body = $this->api->requestOrNull('GET', '/v1/uploads/'.Shape::segment($this->jobId, 'job id').'/part-urls', ['start' => $start]);
-        $plan = $body === null ? null : Plan::parse(Shape::record($body, 'a part URL page'));
+        $plan = $this->api->fetchOrNull('GET', '/v1/uploads/'.Shape::segment($this->jobId, 'job id').'/part-urls', ['start' => $start], static fn (Body $page, int $status): Plan => Plan::parse($page->raw(), $status));
         if ($plan === null || $plan->urls() === []) {
             $this->book->direct = false;
 

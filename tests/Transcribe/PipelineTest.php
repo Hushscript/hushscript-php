@@ -23,13 +23,14 @@ use Hushscript\Tests\Support\PipelineHarness;
 use Hushscript\Transcribe\PartFailure;
 use Hushscript\Transcribe\Resume;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Hushscript\Transcript;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\RequestInterface;
 
 final class PipelineTest extends TestCase
 {
-    /** @var list<string> */
-    private static array $handedOut = [];
+    /** @var \ArrayObject<int, string> */
+    private static \ArrayObject $handedOut;
 
     /** @var list<string> */
     private array $temp = [];
@@ -43,9 +44,8 @@ final class PipelineTest extends TestCase
 
     /**
      * @param  array<string, mixed>  $options
-     * @return array<string, mixed>
      */
-    private static function go(PipelineHarness $harness, array $options = []): array
+    private static function go(PipelineHarness $harness, array $options = []): Transcript
     {
         return $harness->pipeline->transcribe($harness->path(), $options);
     }
@@ -174,7 +174,7 @@ final class PipelineTest extends TestCase
             },
         ]);
 
-        self::assertSame('tr_1', $transcript['id']);
+        self::assertSame('tr_1', $transcript->id);
         self::assertSame(
             ['GET /v1/account', 'POST /v1/uploads', 'POST /v1/uploads/job_1/heartbeat', 'POST /v1/uploads/job_1/complete', 'GET /v1/jobs/job_1', 'GET /v1/transcripts/tr_1'],
             $harness->api->lines(),
@@ -498,7 +498,7 @@ final class PipelineTest extends TestCase
 
         $transcript = self::go($harness, ['concurrency' => 1]);
 
-        self::assertSame('tr_1', $transcript['id']);
+        self::assertSame('tr_1', $transcript->id);
     }
 
     public function testAPartThatCannotBeReadMidUploadIsASourceReadFailureWithTheKeyAndToken(): void
@@ -801,11 +801,11 @@ final class PipelineTest extends TestCase
             $harness->api->on('GET', '/v1/jobs/[^/]+', PipelineHarness::json(200, ['id' => 'job_1', 'state' => 'failed', 'error' => 'boom', 'failure_kind' => 'x']));
         }
         // Kept in a static, not in the closure: what the caller's own callback captured is the caller's.
-        self::$handedOut = [];
+        self::$handedOut = new \ArrayObject();
 
         try {
             self::go($harness, ['on_resume_token' => static function (string $value): void {
-                self::$handedOut[] = $value;
+                self::$handedOut->append($value);
             }]);
             self::fail('expected a failure');
         } catch (HushscriptException $error) {
@@ -813,7 +813,7 @@ final class PipelineTest extends TestCase
             $harness->parts->sent = [];
             $harness->api->requests = [];
             $surface = self::surface($error);
-            $token = self::$handedOut[0] ?? null;
+            $token = self::$handedOut->getArrayCopy()[0] ?? null;
             self::assertIsString($token, 'the create succeeded, so a resume token was handed out');
             foreach (['X-Amz-Signature', 'SECRET', 'r2.example.com', \Hushscript\Tests\Support\Tokens::TEST, $token] as $needle) {
                 $at = strpos($surface, $needle);

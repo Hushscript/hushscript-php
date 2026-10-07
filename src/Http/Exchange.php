@@ -45,17 +45,58 @@ final class Exchange
     }
 
     /**
-     * Like `request`, for a route whose 200 may be a JSON `null` (the part-urls page of a job that takes
-     * no direct URLs): the null comes back as null instead of `bad_response`.
+     * One request whose answer is read by `$parse`: the one boundary where a 2xx body is checked. A body
+     * the parser cannot use (`BadBody`, or any other failure of the parser) is `bad_response` carrying the
+     * actual status; no field is read before the parser has accepted the whole body.
+     *
+     * @template T
      *
      * @param  array<string, scalar|list<scalar>|null>  $query
-     * @return array<mixed>|null
+     * @param  array<mixed>|null  $body
+     * @param  \Closure(Body, int): T  $parse  given the body and the actual 2xx status
+     * @return T
      *
      * @throws HushscriptException
      */
-    public function requestOrNull(string $method, #[\SensitiveParameter] string $path, #[\SensitiveParameter] array $query = []): ?array
+    public function fetch(string $method, #[\SensitiveParameter] string $path, #[\SensitiveParameter] array $query, #[\SensitiveParameter] ?array $body, \Closure $parse): mixed
     {
-        return $this->exchange($method, $path, $query, null, true);
+        $status = 0;
+        $decoded = $this->exchange($method, $path, $query, $body, false, $status);
+        try {
+            return $parse(Body::of($decoded, 'response'), $status);
+        } catch (HushscriptException $failure) {
+            throw $failure;
+        } catch (\Throwable) {
+            throw self::badResponse($status);
+        }
+    }
+
+    /**
+     * Like `fetch`, for a route whose 200 may be a JSON `null` (the part-urls page of a job that takes no
+     * direct URLs): the null comes back as null, without calling `$parse`.
+     *
+     * @template T
+     *
+     * @param  array<string, scalar|list<scalar>|null>  $query
+     * @param  \Closure(Body, int): T  $parse
+     * @return T|null
+     *
+     * @throws HushscriptException
+     */
+    public function fetchOrNull(string $method, #[\SensitiveParameter] string $path, #[\SensitiveParameter] array $query, \Closure $parse): mixed
+    {
+        $status = 0;
+        $decoded = $this->exchange($method, $path, $query, null, true, $status);
+        if ($decoded === null) {
+            return null;
+        }
+        try {
+            return $parse(Body::of($decoded, 'response'), $status);
+        } catch (HushscriptException $failure) {
+            throw $failure;
+        } catch (\Throwable) {
+            throw self::badResponse($status);
+        }
     }
 
     /**
@@ -63,7 +104,7 @@ final class Exchange
      * @param  array<mixed>|null  $body
      * @return array<mixed>|null
      */
-    private function exchange(string $method, #[\SensitiveParameter] string $path, #[\SensitiveParameter] array $query, #[\SensitiveParameter] ?array $body, bool $nullable): ?array
+    private function exchange(string $method, #[\SensitiveParameter] string $path, #[\SensitiveParameter] array $query, #[\SensitiveParameter] ?array $body, bool $nullable, int &$answered = 0): ?array
     {
         $method = strtoupper($method);
         if (! in_array($method, self::METHODS, true)) {
@@ -84,6 +125,7 @@ final class Exchange
         try {
             $response = $this->http->sendRequest($request);
             $status = $response->getStatusCode();
+            $answered = $status;
             if ($status < 200 || $status >= 300) {
                 throw ErrorMapper::fromResponse($response, $this->credentials, $method, $path);
             }

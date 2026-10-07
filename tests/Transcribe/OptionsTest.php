@@ -154,10 +154,12 @@ final class OptionsTest extends TestCase
         $secret = 'captured-resume-token-value';
         $options = Options::forTranscribe([
             'on_progress' => static function (array $event) use ($secret): void {
-                unset($event, $secret);
+                unset($event);
+                self::assertNotSame('', $secret);
             },
             'on_resume_token' => static function (string $token) use ($secret): void {
-                unset($token, $secret);
+                unset($token);
+                self::assertNotSame('', $secret);
             },
         ]);
 

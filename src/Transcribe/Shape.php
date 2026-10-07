@@ -16,24 +16,15 @@ final class Shape
     {
     }
 
-    public static function bad(string $what): ApiError
+    /** An unusable 2xx body: `bad_response` with the status the API actually answered. */
+    public static function bad(string $what, int $status = 200): ApiError
     {
-        return new ApiError('The API answered with '.$what.' the SDK cannot use.', 'bad_response', status: 200);
+        return new ApiError('The API answered '.$status.' with '.$what.' the SDK cannot use.', 'bad_response', status: $status);
     }
 
     public static function positiveInt(mixed $value): ?int
     {
         return is_int($value) && $value >= 1 ? $value : null;
-    }
-
-    /** @return array<string, mixed> */
-    public static function record(#[\SensitiveParameter] mixed $value, string $what): array
-    {
-        if (! is_array($value) || $value === [] || array_is_list($value)) {
-            throw self::bad($what);
-        }
-        /** @var array<string, mixed> $value */
-        return $value;
     }
 
     /** An id that goes into a URL path: non-empty, not a dot segment, percent-encoded. */

@@ -39,6 +39,8 @@ final class Options
 
     private const WAIT = ['wait_timeout', 'on_progress'];
 
+    public readonly Callbacks $callbacks;
+
     /**
      * @param  list<string>  $translateTo
      * @param  list<string>  $keyterms
@@ -63,6 +65,7 @@ final class Options
         public readonly ?\Closure $onProgress,
         public readonly ?\Closure $onResumeToken,
     ) {
+        $this->callbacks = new Callbacks();
     }
 
     /** @param array<string, mixed> $raw */
@@ -205,8 +208,26 @@ final class Options
     public function progress(array $progress): void
     {
         if ($this->onProgress !== null) {
-            ($this->onProgress)($progress);
+            $this->callbacks->call($this->onProgress, $progress);
         }
+    }
+
+    /** The resume token goes to the caller before anything else happens with the job. */
+    public function resumeToken(#[\SensitiveParameter] string $token): void
+    {
+        if ($this->onResumeToken !== null) {
+            $this->callbacks->call($this->onResumeToken, $token);
+        }
+    }
+
+    /**
+     * The progress callback as the polling loop calls it, or null.
+     *
+     * @return (\Closure(array<string, mixed>): void)|null
+     */
+    public function progressSink(): ?\Closure
+    {
+        return $this->onProgress === null ? null : $this->progress(...);
     }
 
     private static function positiveNumber(mixed $value): ?float
@@ -272,11 +293,12 @@ final class Options
     /**
      * The options without the caller's callbacks, whose captured variables could hold anything (a resume token among them).
      *
-     * @return array<string, mixed>
+     * @return array<mixed>
      */
     public function __debugInfo(): array
     {
         $fields = get_object_vars($this);
+        unset($fields['callbacks']);
         foreach (['onProgress', 'onResumeToken'] as $callback) {
             $fields[$callback] = $fields[$callback] === null ? null : '…[callback]';
         }

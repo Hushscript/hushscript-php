@@ -98,9 +98,14 @@ final class Hint
         return is_string($value) ? $value : '';
     }
 
+    /** A finite number a whole count of seconds can come from; anything else (NaN, infinity, beyond int64) counts as absent. */
     private static function number(mixed $value): int|float|null
     {
-        return is_int($value) || is_float($value) ? $value : null;
+        if (is_int($value)) {
+            return $value;
+        }
+
+        return is_float($value) && is_finite($value) && abs($value) < 9.2e18 ? $value : null;
     }
 
     /**

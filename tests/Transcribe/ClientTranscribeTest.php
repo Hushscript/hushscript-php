@@ -33,7 +33,7 @@ final class ClientTranscribeTest extends TestCase
 
         $transcript = $client->transcribe($harness->path());
 
-        self::assertSame('tr_1', $transcript['id']);
+        self::assertSame('tr_1', $transcript->id);
         self::assertCount(3, $harness->parts->sent);
         self::assertSame([], array_filter($harness->api->lines(), static fn (string $line): bool => str_starts_with($line, 'PUT /hushscript/')));
     }
@@ -46,7 +46,7 @@ final class ClientTranscribeTest extends TestCase
 
         $transcript = $client->transcribe($harness->path());
 
-        self::assertSame('tr_1', $transcript['id']);
+        self::assertSame('tr_1', $transcript->id);
         $parts = $harness->api->to('PUT', '/hushscript/job_1/\d+');
         self::assertCount(3, $parts);
         foreach ($parts as $request) {
@@ -63,7 +63,7 @@ final class ClientTranscribeTest extends TestCase
 
         $transcript = $client->resume($token, ['wait_timeout' => 30]);
 
-        self::assertSame('tr_1', $transcript['id']);
+        self::assertSame('tr_1', $transcript->id);
     }
 
     public function testResumeTakesAFilePathAndTheJobsWaitFinishesAJob(): void
@@ -81,8 +81,8 @@ final class ClientTranscribeTest extends TestCase
 
         $job = $client->jobs()->wait(PipelineHarness::JOB);
 
-        self::assertSame('done', $job['state']);
-        self::assertSame('tr_1', $job['transcript_id']);
+        self::assertSame('done', $job->state);
+        self::assertSame('tr_1', $job->transcriptId);
     }
 
     public function testAPartTransportThatIsNotOneIsAConfigurationError(): void
