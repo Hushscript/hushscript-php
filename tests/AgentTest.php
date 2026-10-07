@@ -345,7 +345,7 @@ final class AgentTest extends TestCase
 
         $json = json_encode($account, JSON_THROW_ON_ERROR);
         self::assertStringContainsString(Tokens::ROTATED, $json);
-        self::assertSame(Tokens::ROTATED, json_decode($json, true, 512, JSON_THROW_ON_ERROR)['token']);
+        self::assertSame(['token' => Tokens::ROTATED], array_intersect_key((array) json_decode($json, true, 512, JSON_THROW_ON_ERROR), ['token' => true]));
     }
 
     /** @return iterable<string, array{int, string, string, class-string<HushscriptException>}> */
@@ -429,7 +429,7 @@ final class AgentTest extends TestCase
             self::assertSame(Tokens::ROTATED, $error->receivedToken());
             self::assertSame(self::CLAIM_HINT, $error->hint);
             self::assertInstanceOf(\RuntimeException::class, $error->getPrevious());
-            self::assertStringContainsString('not a bad body', (string) $error->getPrevious()->getMessage());
+            self::assertStringContainsString('not a bad body', $error->getPrevious()->getMessage());
             self::assertStringNotContainsString(Tokens::ROTATED, $error->getMessage().$error->getPrevious()->getMessage());
         }
     }
