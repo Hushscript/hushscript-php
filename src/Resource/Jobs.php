@@ -46,7 +46,7 @@ final class Jobs
             '/v1/jobs',
             array_filter(['active' => $active ? 'true' : null, 'cursor' => $cursor], static fn (?string $value): bool => $value !== null),
             null,
-            static fn (Body $body): Page => new Page(array_map(Job::fromApi(...), $body->list('jobs')), $body->nullableString('next_cursor')),
+            static fn (#[\SensitiveParameter] Body $body): Page => new Page(array_map(Job::fromApi(...), $body->list('jobs')), $body->nullableString('next_cursor')),
         ));
     }
 
@@ -55,7 +55,7 @@ final class Jobs
     {
         $segment = Shape::segment($id, 'job id');
 
-        return $this->exchange->fetch('GET', '/v1/jobs/'.$segment, [], null, static fn (Body $body): Job => Job::fromApi($body));
+        return $this->exchange->fetch('GET', '/v1/jobs/'.$segment, [], null, static fn (#[\SensitiveParameter] Body $body): Job => Job::fromApi($body));
     }
 
     /**

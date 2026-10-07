@@ -123,6 +123,29 @@ final class WaitTest extends TestCase
         }
     }
 
+    /** @return iterable<string, array{string}> */
+    public static function badServerIds(): iterable
+    {
+        yield 'dot dot' => ['..'];
+        yield 'slash' => ['tr/1'];
+        yield 'backslash' => ['tr\\1'];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('badServerIds')]
+    public function testATranscriptIdTheServerSendsThatCannotBeAPathSegmentIsABadResponse(string $id): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('GET', '/v1/jobs/[^/]+', PipelineHarness::json(200, PipelineHarness::jobBody('done', ['transcript_id' => $id])));
+
+        try {
+            $harness->jobsWait('job_1', []);
+            self::fail('expected an ApiError');
+        } catch (ApiError $error) {
+            self::assertSame('bad_response', $error->errorCode);
+            self::assertSame(200, $error->status);
+        }
+    }
+
     public function testAnIdIsPercentEncodedInThePath(): void
     {
         $harness = new PipelineHarness();

@@ -170,4 +170,94 @@ final class SensitiveParametersTest extends TestCase
         self::assertNotNull($reflected);
         self::assertCount(1, $reflected->getAttributes(\SensitiveParameter::class), $key.' can hold a secret: mark it #[\\SensitiveParameter] or pass it as a Hushscript\\Secret');
     }
+
+    /**
+     * Closures and arrow functions are not methods, so the reflection walk above never sees them: a
+     * `static fn (Body $body)` handed to Exchange::fetch put the whole body (signed URLs included) into a trace.
+     *
+     * @return list<string> one entry per unmarked closure parameter that is named like a secret or a body
+     */
+    public static function unmarkedClosureParameters(string $source): array
+    {
+        $tokens = token_get_all($source);
+        $count = count($tokens);
+        $found = [];
+        for ($i = 0; $i < $count; $i++) {
+            $token = $tokens[$i];
+            if (! is_array($token) || ($token[0] !== T_FUNCTION && $token[0] !== T_FN)) {
+                continue;
+            }
+            $line = $token[2];
+            $j = $i + 1;
+            while ($j < $count && (is_array($tokens[$j]) ? in_array($tokens[$j][0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true) : $tokens[$j] === '&')) {
+                $j++;
+            }
+            if ($j >= $count || $tokens[$j] !== '(') {
+                continue;
+            }
+            $depth = 0;
+            $parameter = '';
+            $parameters = [];
+            for (; $j < $count; $j++) {
+                $text = is_array($tokens[$j]) ? $tokens[$j][1] : $tokens[$j];
+                if ($text === '(' || $text === '[' || $text === '{' || $text === '#[') {
+                    $depth++;
+                    if ($depth === 1 && $text === '(') {
+                        continue;
+                    }
+                } elseif ($text === ')' || $text === ']' || $text === '}') {
+                    $depth--;
+                    if ($depth === 0) {
+                        $parameters[] = $parameter;
+                        break;
+                    }
+                } elseif ($text === ',' && $depth === 1) {
+                    $parameters[] = $parameter;
+                    $parameter = '';
+
+                    continue;
+                }
+                $parameter .= $text;
+            }
+            foreach ($parameters as $declaration) {
+                if (preg_match_all('/\$(\w+)/', $declaration, $names) === 0) {
+                    continue;
+                }
+                $name = end($names[1]);
+                $named = preg_match('/token|secret|url|authorization|pat|claim/i', $name) === 1 || preg_match(self::BODY_NAMES, $name) === 1;
+                if ($named && ! str_contains($declaration, '#[\\SensitiveParameter]')) {
+                    $found[] = 'line '.$line.' $'.$name;
+                }
+            }
+        }
+
+        return $found;
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function sourceFiles(): iterable
+    {
+        $root = (string) realpath(__DIR__.'/../src');
+        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+        foreach ($files as $file) {
+            if ($file instanceof \SplFileInfo && $file->getExtension() === 'php' && ! str_contains($file->getPathname(), '/Generated/')) {
+                yield substr((string) realpath($file->getPathname()), strlen($root) + 1) => [(string) realpath($file->getPathname())];
+            }
+        }
+    }
+
+    #[DataProvider('sourceFiles')]
+    public function testEveryClosureParameterNamedLikeASecretIsMarkedSensitive(string $path): void
+    {
+        self::assertSame([], self::unmarkedClosureParameters((string) file_get_contents($path)), 'mark closure parameters that can hold a secret or a body with #[\\SensitiveParameter]');
+    }
+
+    public function testTheClosureGuardCatchesAnUnmarkedParameter(): void
+    {
+        $unmarked = '<?php $a = static fn (Body $body, int $status): int => 1; $b = static function (\Throwable $failure): never { throw $failure; }; $c = fn (?string $cursor) => $cursor;';
+        self::assertSame(['line 1 $body', 'line 1 $failure'], self::unmarkedClosureParameters($unmarked));
+
+        $marked = '<?php $a = static fn (#[\SensitiveParameter] Body $body, int $status): int => 1; $b = static function (#[\SensitiveParameter] \Throwable $failure): never { throw $failure; };';
+        self::assertSame([], self::unmarkedClosureParameters($marked));
+    }
 }

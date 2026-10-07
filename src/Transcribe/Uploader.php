@@ -455,7 +455,7 @@ final class Uploader
      */
     private function fetch(int $start, bool $advance): void
     {
-        $plan = $this->api->fetchOrNull('GET', '/v1/uploads/'.Shape::segment($this->jobId, 'job id').'/part-urls', ['start' => $start], static fn (Body $page, int $status): Plan => Plan::parse($page->raw(), $status));
+        $plan = $this->api->fetchOrNull('GET', '/v1/uploads/'.Shape::segment($this->jobId, 'job id').'/part-urls', ['start' => $start], static fn (#[\SensitiveParameter] Body $page, int $status): Plan => Plan::parse($page->raw(), $status));
         if ($plan === null || $plan->urls() === []) {
             $this->book->direct = false;
 

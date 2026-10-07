@@ -325,6 +325,33 @@ final class UploadRulesTest extends TestCase
         self::assertSame([], $harness->parts->sent);
     }
 
+    public function testABadCreateAnswerThatCarriesPartUrlsLeavesNoSignedUrlInTheTrace(): void
+    {
+        $previous = ini_set('zend.exception_ignore_args', '0');
+        try {
+            $harness = new PipelineHarness();
+            $body = $harness->createBody();
+            self::assertIsArray($body['upload']);
+            $body['upload']['part_urls'] = [['n' => 1, 'url' => 'https://r2.example.com/hushscript/job_1/1?X-Amz-Signature=SECRET'], ['n' => 'two', 'url' => 'https://r2.example.com/hushscript/job_1/2?X-Amz-Signature=SECRET']];
+            $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, $body));
+
+            $error = self::failure($harness, ApiError::class);
+        } finally {
+            if ($previous !== false) {
+                ini_set('zend.exception_ignore_args', $previous);
+            }
+        }
+
+        self::assertSame('bad_response', $error->errorCode);
+        $surface = '';
+        for ($link = $error; $link !== null; $link = $link->getPrevious()) {
+            $surface .= print_r($link->getTrace(), true);
+        }
+        self::assertStringContainsString('Created', $surface, 'the trace has frames to inspect');
+        self::assertStringNotContainsString('X-Amz-Signature', $surface);
+        self::assertStringNotContainsString('SECRET', $surface);
+    }
+
     public function testADirectSuccessWithoutAnEtagThatArrivesAfterTheSwitchToTheApiIsIgnored(): void
     {
         $clock = new FakeIdleClock();

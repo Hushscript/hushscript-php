@@ -158,7 +158,7 @@ final class Pipeline
     private function create(#[\SensitiveParameter] array $body): Created
     {
         // The transport paces the create to the 4 per minute the API allows (spec 7.5).
-        return $this->api->fetch('POST', '/v1/uploads', [], $body, static fn (Body $answer, int $status): Created => Created::parse($answer->raw(), $status));
+        return $this->api->fetch('POST', '/v1/uploads', [], $body, static fn (#[\SensitiveParameter] Body $answer, int $status): Created => Created::parse($answer->raw(), $status));
     }
 
     /**

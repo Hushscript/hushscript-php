@@ -379,6 +379,17 @@ final class MediaTest extends TestCase
         self::assertGreaterThanOrEqual($sum - 0.001, Probe::seconds(Source::open($path)));
     }
 
+    public function testATagFollowedByMoreThanABlockOfJunkBeforeTheFramesNeverCountsLessThanTheFrames(): void
+    {
+        // The junk ends inside a 1 MiB block, so a frame skip crosses the next block boundary.
+        $frames = (string) file_get_contents(self::path('cbr-20s.mp3'));
+        $true = Probe::seconds(Source::open(self::path('cbr-20s.mp3')));
+        $path = $this->temp('');
+        file_put_contents($path, self::tag(1000).str_repeat("\0", 2_000_000).$frames);
+
+        self::assertGreaterThanOrEqual($true - 0.001, Probe::seconds(Source::open($path)), 'a failed tag skip loses no frame');
+    }
+
     public function testJunkOfAnyLengthBetweenFramesNeverHidesTheFramesAfterIt(): void
     {
         $first = self::path('cbr-20s.mp3');
