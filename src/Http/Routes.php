@@ -25,7 +25,7 @@ final class Routes
     /**
      * @return array{RetryClass, string|null}|null  the class and, for a credential-minting route, its name
      */
-    private static function route(string $method, string $path): ?array
+    private static function route(string $method, #[\SensitiveParameter] string $path): ?array
     {
         $path = self::normalize($path);
         $routes = [
@@ -48,14 +48,14 @@ final class Routes
     }
 
     /** The path without trailing slashes; the root stays "/". */
-    public static function normalize(string $path): string
+    public static function normalize(#[\SensitiveParameter] string $path): string
     {
         $trimmed = rtrim($path, '/');
 
         return $trimmed === '' ? '/' : $trimmed;
     }
 
-    public static function classify(string $method, string $path): RetryClass
+    public static function classify(string $method, #[\SensitiveParameter] string $path): RetryClass
     {
         $route = self::route($method, $path);
         if ($route !== null) {
@@ -66,7 +66,7 @@ final class Routes
     }
 
     /** `claim`, `rotate` or `signup` when the request is one of the spec 7.4 routes. */
-    public static function unrecoverable(string $method, string $path): ?string
+    public static function unrecoverable(string $method, #[\SensitiveParameter] string $path): ?string
     {
         return self::route($method, $path)[1] ?? null;
     }

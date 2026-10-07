@@ -126,7 +126,7 @@ final class Probe
             fseek($handle, $start);
             $total = 0.0;
             $frames = 0;
-            $skipped = 0;
+            $junk = 0;
             while (true) {
                 $header = fread($handle, self::FRAME_HEADER);
                 if ($header === false || strlen($header) < self::FRAME_HEADER) {
@@ -134,14 +134,17 @@ final class Probe
                 }
                 $frame = self::frame($header);
                 if ($frame === null) {
-                    $skipped++;
-                    if ($skipped > self::RESYNC_LIMIT && $frames === 0) {
+                    // A run of bytes with no frame in it: past the limit the rest is not audio (the container's
+                    // own figure still counts), so a large junk tail is not walked byte by byte.
+                    $junk++;
+                    if ($junk > self::RESYNC_LIMIT) {
                         break;
                     }
                     fseek($handle, -(self::FRAME_HEADER - 1), SEEK_CUR);
 
                     continue;
                 }
+                $junk = 0;
                 [$length, $samples, $rate] = $frame;
                 $total += $samples / $rate;
                 $frames++;

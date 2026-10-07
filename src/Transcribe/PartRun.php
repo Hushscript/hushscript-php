@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hushscript\Transcribe;
 
 use GuzzleHttp\Promise\PromiseInterface;
+use Hushscript\Secret;
 use Psr\Http\Message\ResponseInterface;
 
 /**
@@ -22,15 +23,13 @@ final class PartRun
 
     public bool $proxied = false;
 
-    public ?string $url = null;
+    public ?Secret $url = null;
 
     /** Retries of the current way and URL, counted for the retry table. */
     public int $attempt = 0;
 
-    /** R2 403s answered with a fresh URL, and the rounds of retries after a success elsewhere (spec 8.4). */
+    /** Fresh URL pages this part has been given (spec 8.4): at most one. */
     public int $refreshes = 0;
-
-    public int $rounds = 0;
 
     public ?float $notBefore = null;
 
@@ -47,5 +46,11 @@ final class PartRun
     public function length(): int
     {
         return strlen($this->data);
+    }
+
+    /** @return array<string, int|bool> a dump shows the part's size, not its bytes */
+    public function __debugInfo(): array
+    {
+        return ['n' => $this->n, 'length' => $this->length(), 'proxied' => $this->proxied, 'attempt' => $this->attempt, 'done' => $this->done];
     }
 }

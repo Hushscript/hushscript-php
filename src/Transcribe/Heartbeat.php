@@ -46,10 +46,13 @@ final class Heartbeat
         return $this->stopped ? INF : $this->last + self::INTERVAL;
     }
 
-    /** Sends the ping when 120 s have passed since the last one. */
-    public function tick(): void
+    /**
+     * Sends the ping when 120 s have passed since the last one, or will have passed `$lookahead`
+     * seconds from now: a caller about to block that long pings before it does.
+     */
+    public function tick(float $lookahead = 0.0): void
     {
-        if (! $this->stopped && $this->clock->now() >= $this->last + self::INTERVAL) {
+        if (! $this->stopped && $this->clock->now() + $lookahead >= $this->last + self::INTERVAL) {
             $this->beat();
         }
     }

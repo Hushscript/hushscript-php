@@ -35,6 +35,32 @@ final class Api
      */
     public function request(string $method, #[\SensitiveParameter] string $path, #[\SensitiveParameter] array $query = [], #[\SensitiveParameter] ?array $body = null): array
     {
+        return $this->exchange($method, $path, $query, $body, false) ?? [];
+    }
+
+    /**
+     * Like `request`, for a route whose 200 may be a JSON `null` (the part-urls page of a job that takes
+     * no direct URLs): the null comes back as null instead of `bad_response`.
+     *
+     * @internal
+     *
+     * @param  array<string, scalar|list<scalar>|null>  $query
+     * @return array<mixed>|null
+     *
+     * @throws \Hushscript\Exception\HushscriptException
+     */
+    public function requestOrNull(string $method, #[\SensitiveParameter] string $path, #[\SensitiveParameter] array $query = []): ?array
+    {
+        return $this->exchange($method, $path, $query, null, true);
+    }
+
+    /**
+     * @param  array<string, scalar|list<scalar>|null>  $query
+     * @param  array<mixed>|null  $body
+     * @return array<mixed>|null
+     */
+    private function exchange(string $method, #[\SensitiveParameter] string $path, #[\SensitiveParameter] array $query, #[\SensitiveParameter] ?array $body, bool $nullable): ?array
+    {
         $method = strtoupper($method);
         if (! in_array($method, self::METHODS, true)) {
             throw new PreflightError('Unsupported HTTP method "'.Redact::text($method).'".', 'invalid_option');
@@ -64,6 +90,9 @@ final class Api
             $decoded = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
         } catch (\JsonException) {
             throw $this->badResponse($status);
+        }
+        if ($decoded === null && $nullable) {
+            return null;
         }
         if (! is_array($decoded)) {
             throw $this->badResponse($status);

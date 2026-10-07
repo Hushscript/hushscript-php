@@ -60,19 +60,52 @@ final class PipelineTest extends TestCase
     }
 
     /**
-     * Every string in the arguments of a trace; objects are not entered, a SensitiveParameterValue is not readable.
-     *
-     * @param  array<mixed>  $value
+     * Everything an observer of an error chain can read: messages, trace text, and every string
+     * reachable from a trace argument, objects and their private properties included. A value kept
+     * outside the object (a Secret, Credentials) is not reachable, which is the point.
      */
-    private static function traceStrings(array $value, int $depth = 0): string
+    private static function surface(\Throwable $error): string
     {
         $out = '';
-        foreach ($value as $item) {
-            if (is_string($item)) {
-                $out .= $item."\n";
-            } elseif (is_array($item) && $depth < 6) {
-                $out .= self::traceStrings($item, $depth + 1);
+        $seen = [];
+        for ($link = $error; $link !== null; $link = $link->getPrevious()) {
+            // The frames of the SDK; the ones below them are the test runner's own arguments.
+            $frames = array_filter($link->getTrace(), static fn (array $frame): bool => str_contains($frame['file'] ?? '', dirname(__DIR__, 2).'/src/'));
+            $out .= $link->getMessage()."\n".$link->getTraceAsString()."\n".self::reachable($frames, 0, $seen);
+        }
+
+        return $out;
+    }
+
+    /** @param array<int, true> $seen */
+    private static function reachable(mixed $value, int $depth, array &$seen): string
+    {
+        if (is_string($value)) {
+            return $value."\n";
+        }
+        if ($depth > 7) {
+            return '';
+        }
+        $out = '';
+        if (is_array($value)) {
+            foreach ($value as $key => $item) {
+                $out .= (is_string($key) ? $key."\n" : '').self::reachable($item, $depth + 1, $seen);
             }
+
+            return $out;
+        }
+        if (! is_object($value) || isset($seen[spl_object_id($value)])) {
+            return '';
+        }
+        $seen[spl_object_id($value)] = true;
+        if ($value instanceof \Closure) {
+            return self::reachable((new \ReflectionFunction($value))->getStaticVariables(), $depth + 1, $seen);
+        }
+        foreach ((new \ReflectionObject($value))->getProperties() as $property) {
+            if ($property->isStatic() || ! $property->isInitialized($value)) {
+                continue;
+            }
+            $out .= self::reachable($property->getValue($value), $depth + 1, $seen);
         }
 
         return $out;
@@ -456,7 +489,7 @@ final class PipelineTest extends TestCase
     {
         $harness = new PipelineHarness();
         $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, self::upload($harness->createBody(), ['part_urls' => []])));
-        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => $harness->partSize, 'total_parts' => 3, 'part_urls' => [], 'next_part_number' => null]));
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => $harness->partSize, 'total_parts' => 3, 'part_urls' => [['n' => 2, 'url' => PipelineHarness::url(2)]], 'next_part_number' => null]));
 
         $error = self::failure($harness, UploadError::class);
 
@@ -624,6 +657,10 @@ final class PipelineTest extends TestCase
             ['cbr-20s.mp3', ['concurrency' => 99], PreflightError::class, 'invalid_option'],
             ['cbr-20s.mp3', ['duration_seconds' => NAN], PreflightError::class, 'invalid_option'],
             ['cbr-20s.mp3', ['duration_seconds' => 5], FileLimitError::class, 'duration_out_of_range'],
+            ['cbr-20s.mp3', ['duration_seconds' => INF], PreflightError::class, 'invalid_option'],
+            ['cbr-20s.mp3', ['duration_seconds' => 1e300], FileLimitError::class, 'duration_out_of_range'],
+            ['cbr-20s.mp3', ['duration_seconds' => 9.3e18], FileLimitError::class, 'duration_out_of_range'],
+            ['cbr-20s.mp3', ['duration_seconds' => 36000.5], FileLimitError::class, 'duration_out_of_range'],
         ] as [$file, $options, $class, $code]) {
             $harness = new PipelineHarness(file: $file);
             try {
@@ -688,30 +725,60 @@ final class PipelineTest extends TestCase
         self::assertSame(['GET /v1/account'], $harness->api->lines());
     }
 
-    public function testNoSignedUrlOrTokenSurfacesAnywhere(): void
+    /** @return iterable<string, array{string}> */
+    public static function failures(): iterable
     {
-        $harness = new PipelineHarness(script: static fn (): array => [PartFailure::of(new \RuntimeException('cURL error 28 for '.PipelineHarness::url(1))), 0.0]);
-        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => [['n' => 1, 'url' => PipelineHarness::url(1, '&fresh=1')], ['n' => 2, 'url' => PipelineHarness::url(2, '&fresh=1')], ['n' => 3, 'url' => PipelineHarness::url(3, '&fresh=1')]], 'next_part_number' => null]));
+        yield 'every direct attempt fails' => ['exhausted'];
+        yield 'storage sends no ETag' => ['etag_missing'];
+        yield 'the part-urls refresh fails' => ['refresh_failed'];
+        yield 'the job failed' => ['job_failed'];
+    }
+
+    #[DataProvider('failures')]
+    public function testNoSignedUrlOrTokenSurfacesAnywhere(string $scenario): void
+    {
+        $fresh = ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => [['n' => 1, 'url' => PipelineHarness::url(1, '&fresh=1')], ['n' => 2, 'url' => PipelineHarness::url(2, '&fresh=1')], ['n' => 3, 'url' => PipelineHarness::url(3, '&fresh=1')]], 'next_part_number' => null];
+        $harness = match ($scenario) {
+            'etag_missing' => new PipelineHarness(script: static fn (): array => [new Response(200), 0.0]),
+            'refresh_failed' => new PipelineHarness(script: static fn (array $request): array => [self::partNumber($request['url']) === 1 ? PipelineHarness::stored() : self::fail500(), 0.0]),
+            'job_failed' => new PipelineHarness(script: static fn (): array => [PipelineHarness::stored(), 0.0]),
+            default => new PipelineHarness(script: static fn (): array => [PartFailure::of(new \RuntimeException('cURL error 28 for '.PipelineHarness::url(1))), 0.0]),
+        };
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', match ($scenario) {
+            'refresh_failed' => static fn (RequestInterface $request): \Throwable => new \GuzzleHttp\Exception\ConnectException('cURL error 7 for '.$request->getUri(), $request),
+            default => PipelineHarness::json(200, $fresh),
+        });
+        if ($scenario === 'job_failed') {
+            $harness->api->on('GET', '/v1/jobs/[^/]+', PipelineHarness::json(200, ['id' => 'job_1', 'state' => 'failed', 'error' => 'boom', 'failure_kind' => 'x']));
+        }
+        /** @var \ArrayObject<int, string> $handedOut */
+        $handedOut = new \ArrayObject();
 
         try {
-            self::go($harness);
-            self::fail('expected parts_exhausted or a fallback failure');
+            self::go($harness, ['on_resume_token' => static function (string $value) use ($handedOut): void {
+                $handedOut->append($value);
+            }]);
+            self::fail('expected a failure');
         } catch (HushscriptException $error) {
-            $surface = implode("\n", [$error->getMessage(), (string) $error->hint, var_export($error->details, true)]);
-            for ($link = $error; $link !== null; $link = $link->getPrevious()) {
-                $surface .= "\n".$link->getMessage()."\n".$link->getTraceAsString()."\n".self::traceStrings($link->getTrace());
+            // The fakes keep the requests they saw; those are the test's own record, not the SDK's.
+            $harness->parts->sent = [];
+            $harness->api->requests = [];
+            $surface = self::surface($error);
+            $token = $handedOut->getArrayCopy()[0] ?? null;
+            self::assertIsString($token, 'the create succeeded, so a resume token was handed out');
+            foreach (['X-Amz-Signature', 'SECRET', 'r2.example.com', \Hushscript\Tests\Support\Tokens::TEST, $token] as $needle) {
+                $at = strpos($surface, $needle);
+                self::assertFalse($at, $needle === $token ? 'the resume token' : $needle.' near: '.preg_replace('/[^\x20-\x7e]/', '.', substr($surface, max(0, (int) $at - 150), 300)));
             }
-            self::assertStringNotContainsString('X-Amz-Signature', $surface);
-            self::assertStringNotContainsString('SECRET', $surface);
-            self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, $surface);
+            self::assertSame($token, $error->resumeToken, 'the caller gets the token on the error itself');
         }
         $logs = implode("\n", $harness->logLines);
-        self::assertStringContainsString('r2:part/1', $logs);
         self::assertStringNotContainsString('X-Amz-Signature', $logs);
         self::assertStringNotContainsString('SECRET', $logs);
         self::assertStringNotContainsString('r2.example.com', $logs);
         self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, $logs);
     }
+
 
     public function testAFailingProxiedPartRaisesTheApiErrorItself(): void
     {

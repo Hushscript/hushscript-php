@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hushscript\Transcribe;
 
 use Hushscript\Exception\UploadError;
+use Hushscript\Secret;
 
 /**
  * The part plan of a create or `part-urls` response (spec 8.3): how the file is cut and the signed
@@ -14,11 +15,11 @@ final class Plan
 {
     public const MAX_PART_BYTES = 32 * 1024 * 1024;
 
-    /** @var \WeakMap<self, array<int, string>>|null */
+    /** @var \WeakMap<self, array<int, Secret>>|null */
     private static ?\WeakMap $urls = null;
 
     /**
-     * @param  array<int, string>  $urls  part number to signed URL
+     * @param  array<int, Secret>  $urls  part number to signed URL
      */
     public function __construct(
         public readonly int $partSize,
@@ -30,7 +31,7 @@ final class Plan
         self::$urls[$this] = $urls;
     }
 
-    /** @return array<int, string> */
+    /** @return array<int, Secret> */
     public function urls(): array
     {
         return self::$urls[$this] ?? [];
@@ -66,7 +67,7 @@ final class Plan
             if ($n === null || ! is_string($url) || $url === '') {
                 throw Shape::bad('a part URL list');
             }
-            $urls[$n] = $url;
+            $urls[$n] = new Secret($url);
         }
 
         return new self($partSize, $total, $urls, is_int($next) ? $next : null);

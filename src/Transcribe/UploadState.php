@@ -36,25 +36,25 @@ final class UploadState
         return $this->mode === self::PROXIED;
     }
 
-    /** Notes a direct success; false when the upload went through the API in the meantime. */
-    public function record(int $n, string $etag): bool
+    public function direct(): bool
     {
-        if ($this->mode === self::PROXIED) {
-            return false;
-        }
+        return $this->mode === self::DIRECT;
+    }
+
+    /** Notes a direct success. The caller has checked that the upload has not gone through the API. */
+    public function record(int $n, string $etag): void
+    {
         $this->mode = self::DIRECT;
         $this->etags[$n] = $etag;
-
-        return true;
     }
 
     /**
      * What a part does after its direct PUT failed even with its retries.
      *
-     * An R2 403 means an expired URL: refresh it, once. Otherwise, while no direct PUT has succeeded,
-     * every remaining part goes through the API (the app's rule). After a success the part keeps
-     * trying direct: its retries, then a re-fetched URL and the retries again (spec 8.4, R8), then
-     * `parts_exhausted`.
+     * An R2 403 means an expired URL, and after a direct success any failure may: the part gets one
+     * fresh URL page and its retries again (spec 8.4, R8). Past that, while no direct PUT has
+     * succeeded, every remaining part goes through the API (the app's rule); after a success the part
+     * is `parts_exhausted`.
      *
      * @return self::REFRESH|self::FALLBACK|self::EXHAUSTED
      */
@@ -63,19 +63,27 @@ final class UploadState
         if ($this->mode === self::PROXIED) {
             return self::FALLBACK;
         }
-        if ($status === 403 && $run->refreshes < 1) {
+        if ($run->refreshes < 1 && ($status === 403 || $this->mode === self::DIRECT)) {
             $run->refreshes++;
 
             return self::REFRESH;
         }
-        if ($this->mode === self::UNDECIDED && $run->rounds === 0) {
-            $this->mode = self::PROXIED;
 
-            return self::FALLBACK;
+        return $this->fallBack() ? self::FALLBACK : self::EXHAUSTED;
+    }
+
+    /**
+     * Moves an undecided upload to the API and says so; true as well when it already went that way,
+     * false when a direct PUT has succeeded, which rules the fallback out.
+     */
+    public function fallBack(): bool
+    {
+        if ($this->mode === self::DIRECT) {
+            return false;
         }
-        $run->rounds++;
+        $this->mode = self::PROXIED;
 
-        return $run->rounds === 1 ? self::REFRESH : self::EXHAUSTED;
+        return true;
     }
 
     /**

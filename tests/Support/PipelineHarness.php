@@ -8,6 +8,7 @@ use GuzzleHttp\Psr7\Response;
 use Hushscript\Api;
 use Hushscript\Credentials;
 use Hushscript\Http\RetryMiddleware;
+use Hushscript\Http\WaitTicker;
 use Hushscript\Log;
 use Hushscript\Transcribe\PartFailure;
 use Hushscript\Transcribe\PartTransport;
@@ -54,6 +55,7 @@ final class PipelineHarness
         $this->api = new FakeApi();
         $this->parts = new FakePartTransport($clock, $script ?? static fn (array $request): array => [self::stored(), 0.0]);
         $this->credentials = new Credentials(Tokens::TEST);
+        $ticker = new WaitTicker();
         $retry = new RetryMiddleware(
             $this->api,
             $this->credentials,
@@ -64,6 +66,7 @@ final class PipelineHarness
             }),
             $maxRetries,
             jitter: static fn (float $ceiling): float => $ceiling,
+            ticker: $ticker,
         );
         $api = new Api($retry, $this->credentials, self::BASE);
         $this->pipeline = new Pipeline(
@@ -77,6 +80,7 @@ final class PipelineHarness
             $maxRetries,
             fn (): PartTransport => $transport ?? $this->parts,
             static fn (float $ceiling): float => $ceiling,
+            $ticker,
         );
         $this->defaults();
     }

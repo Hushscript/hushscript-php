@@ -9,6 +9,7 @@ use Hushscript\Clock;
 use Hushscript\Exception\JobFailedError;
 use Hushscript\Exception\UploadError;
 use Hushscript\Exception\WaitTimeoutError;
+use Hushscript\Secret;
 
 /**
  * Polls a job and fetches its transcript (spec 8.6).
@@ -47,7 +48,7 @@ final class Wait
      * @param  (\Closure(array<string, mixed>): void)|null  $onProgress
      * @return array<string, mixed>
      */
-    public static function until(Api $api, Clock $clock, string $jobId, float $waitTimeout, ?\Closure $onProgress, ?string $token, ?array $first = null): array
+    public static function until(Api $api, Clock $clock, string $jobId, float $waitTimeout, ?\Closure $onProgress, ?Secret $token, ?array $first = null): array
     {
         $started = $clock->now();
         $delay = self::FIRST_DELAY;
@@ -66,7 +67,7 @@ final class Wait
                 $timeout = new WaitTimeoutError(
                     'The job was still running after '.rtrim(rtrim(sprintf('%.3f', $waitTimeout), '0'), '.').' s. It keeps running on the server.',
                 );
-                $timeout->resumeToken = $token;
+                $timeout->resumeToken = $token?->reveal();
 
                 throw $timeout;
             }

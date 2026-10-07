@@ -46,6 +46,21 @@ final class Source
         if ($path === '' || str_contains($path, "\0")) {
             throw self::unreadable($path, 'the path is empty or not valid');
         }
+        // Sized by path first: opening a FIFO or a device for reading can block, so only a regular file is opened.
+        /** @var array{mode: int, size: int}|false $before */
+        [$before, $missing] = self::capture(static fn (): mixed => stat($path));
+        if ($before === false) {
+            // A path that cannot be sized does not exist or cannot be reached, so opening it cannot block: it names the OS error.
+            [$opened, $why] = self::capture(static fn (): mixed => fopen($path, 'rb'));
+            if (is_resource($opened)) {
+                fclose($opened);
+            }
+
+            throw self::unreadable($path, $why ?? $missing ?? 'it cannot be inspected');
+        }
+        if (($before['mode'] & 0170000) !== 0100000) {
+            throw self::unreadable($path, 'it is not a regular file');
+        }
         [$handle, $failure] = self::capture(static fn (): mixed => fopen($path, 'rb'));
         if (! is_resource($handle)) {
             throw self::unreadable($path, $failure ?? 'it cannot be opened');
