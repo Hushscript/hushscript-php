@@ -96,7 +96,7 @@ build version=floor:
     chmod 777 "$out"
     user="$(id -u):$(id -g)"
     docker run {{sandbox}} --network none --user "$user" -e HOME=/tmp -v "$out":/out "hushscript-php-dev:php{{version}}" \
-      sh -c 'timeout 120 composer validate --strict && timeout 120 composer archive --format=tar --dir=/out --file=hushscript'
+      sh -c 'timeout 120 composer --no-plugins validate --strict && timeout 120 composer --no-plugins archive --format=tar --dir=/out --file=hushscript'
     check='require "/work/vendor/autoload.php"; spl_autoload_register(static function (string $c): void { $f = "/tmp/pkg/src/" . str_replace("\\", "/", substr($c, 10)) . ".php"; if (str_starts_with($c, "Hushscript\\") && is_file($f)) { require $f; } }); $hs = new Hushscript\Client("hsr1:eu:pat.0123456789abcdef0123456789abcdef.0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); assert(Hushscript\Generated\Catalog::ENTRIES !== [] && Hushscript\Generated\Hints::TABLE !== [] && Hushscript\Generated\Scopes::OPERATIONS !== []); echo "archive ok ", Hushscript\Version::SDK, "\n";'
     docker run {{sandbox}} --network none --user "$user" -v "$out":/dist:ro -w /tmp "hushscript-php-proddeps:php{{version}}" \
       sh -c 'mkdir /tmp/pkg && cd /tmp/pkg && tar -xf /dist/hushscript.tar -C /tmp/pkg && test -f /tmp/pkg/src/Client.php && test ! -e /tmp/pkg/tests && cd /work && timeout 60 php -d zend.assertions=1 -r "$0"' "$check"

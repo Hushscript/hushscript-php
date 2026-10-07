@@ -22,9 +22,9 @@ RUN groupadd --gid 10001 dev && useradd --uid 10001 --gid 10001 --no-create-home
 COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 # Composer unpacks dist archives with unzip when the zip extension is missing; the static musl busybox supplies it.
 COPY --from=busybox /bin/busybox /usr/local/bin/busybox
-RUN ln -s busybox /usr/local/bin/unzip
 COPY --from=pcov-build /out/pcov.so /opt/pcov/pcov.so
-RUN printf 'extension=/opt/pcov/pcov.so\npcov.directory=/work/src\n' > /usr/local/etc/php/conf.d/pcov.ini \
+RUN ln -s busybox /usr/local/bin/unzip \
+  && printf 'extension=/opt/pcov/pcov.so\npcov.directory=/work/src\n' > /usr/local/etc/php/conf.d/pcov.ini \
   && printf 'memory_limit=1G\n' > /usr/local/etc/php/conf.d/memory.ini
 ENV HOME=/tmp \
     COMPOSER_HOME=/tmp/composer \
@@ -42,8 +42,7 @@ FROM base AS dev
 COPY --from=deps /work/vendor vendor
 COPY --chown=10001:10001 . .
 ENV PATH=/work/vendor/bin:$PATH
-RUN composer dump-autoload --no-plugins --no-scripts --optimize \
-  && chown -R 10001:10001 /work
+RUN composer dump-autoload --no-plugins --no-scripts --optimize
 USER 10001:10001
 
 # Runtime dependencies only: `just build` installs the archive next to these with no network.

@@ -85,7 +85,7 @@ services:
         timeout 300 pint --test
         && timeout 900 phpstan analyse --memory-limit=1G --no-progress
         && timeout 900 psalm --taint-analysis --no-progress
-        && timeout 300 composer validate --strict
+        && timeout 300 composer --no-plugins validate --strict
         && timeout 300 composer-dependency-analyser
 
   conformance:
