@@ -337,6 +337,17 @@ final class AgentTest extends TestCase
         self::assertSame(Tokens::ROTATED, $account->token);
     }
 
+    public function testDeliberateExportOfTheClaimedAccountCarriesTheToken(): void
+    {
+        $http = new FakeHttp([FakeHttp::json(200, self::claimed())]);
+
+        $account = Client::agentClaim('sg_1', 'cs_secret_0123456789ab', self::options($http));
+
+        $json = json_encode($account, JSON_THROW_ON_ERROR);
+        self::assertStringContainsString(Tokens::ROTATED, $json);
+        self::assertSame(Tokens::ROTATED, json_decode($json, true, 512, JSON_THROW_ON_ERROR)['token']);
+    }
+
     /** @return iterable<string, array{int, string, string, class-string<HushscriptException>}> */
     public static function claimErrors(): iterable
     {
@@ -735,6 +746,16 @@ final class AgentTest extends TestCase
 
         self::assertStringNotContainsString(Tokens::ROTATED, print_r($rotated, true));
         self::assertSame(Tokens::ROTATED, $rotated->token);
+    }
+
+    public function testDeliberateExportOfTheRotatedTokenAndTheClaimSecretCarriesThem(): void
+    {
+        $http = new FakeHttp([FakeHttp::json(200, ['pat' => Tokens::ROTATED, 'pat_id' => 'pat_9', 'scopes' => ['a']])]);
+        $rotated = self::client($http)->agent()->rotateToken();
+        $signup = Client::agentSignup(self::request(), self::options(new FakeHttp([FakeHttp::json(200, self::signedUp())])));
+
+        self::assertStringContainsString(Tokens::ROTATED, json_encode($rotated, JSON_THROW_ON_ERROR));
+        self::assertStringContainsString('cs_0123456789abcdef0123', json_encode($signup, JSON_THROW_ON_ERROR));
     }
 
     private static function unreadableBody(): Response

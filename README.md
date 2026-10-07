@@ -403,8 +403,11 @@ $account = $hs->api()->request('GET', '/v1/account');
 The SDK sends no telemetry. The only client identification is the `User-Agent` header
 (`hushscript-php/<version> php/<version>`). Logging is off by default; `HUSHSCRIPT_LOG=debug` (or
 `'log_level' => 'debug'`) writes one line per request with the method, path, status and timing, and
-never a header, body, title or transcript text. The token never appears in `var_dump`, `print_r`,
-`var_export`, `json_encode`, exception messages or traces, and `serialize()` of the client throws.
+never a header, body, title or transcript text. The client's token never appears in `var_dump`,
+`print_r`, `var_export`, `json_encode`, exception messages or traces, and `serialize()` of the client
+throws. Results that hand you a secret (the claim secret, a new token) show it as `[redacted]` in
+`var_dump` and `print_r`, but carry it in `json_encode`, `serialize` and `var_export`, which are your
+own export.
 
 ## Server only
 
