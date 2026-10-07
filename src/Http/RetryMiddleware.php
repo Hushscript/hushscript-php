@@ -68,6 +68,7 @@ final class RetryMiddleware implements ClientInterface
         private readonly int $maxRetries,
         ?Pacing $pacing = null,
         ?\Closure $jitter = null,
+        private readonly ?WaitTicker $ticker = null,
     ) {
         $parts = parse_url($baseUrl);
         $this->baseScheme = strtolower($parts['scheme'] ?? 'https');
@@ -111,7 +112,7 @@ final class RetryMiddleware implements ClientInterface
             if ($paced) {
                 $wait = $this->pacing->reserve();
                 if ($wait > 0) {
-                    $this->clock->sleep($wait);
+                    $this->pause($wait);
                 }
             }
             $started = $this->clock->now();
@@ -146,8 +147,13 @@ final class RetryMiddleware implements ClientInterface
 
                 return $response;
             }
-            $this->clock->sleep($decision->delay);
+            $this->pause($decision->delay);
         }
+    }
+
+    private function pause(float $seconds): void
+    {
+        $this->ticker === null ? $this->clock->sleep($seconds) : $this->ticker->sleep($this->clock, $seconds);
     }
 
     private function attemptOnce(#[\SensitiveParameter] RequestInterface $request, bool $onBase, RetryClass $class): ResponseInterface

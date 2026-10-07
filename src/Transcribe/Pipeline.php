@@ -9,7 +9,9 @@ use Hushscript\Clock;
 use Hushscript\Credentials;
 use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\NotFoundError;
+use Hushscript\Http\WaitTicker;
 use Hushscript\Log;
+use Hushscript\Secret;
 
 /**
  * The transcribe pipeline (spec 8): preflight, create, parts, heartbeat, complete, wait and fetch,
@@ -32,6 +34,7 @@ final class Pipeline
         private readonly int $maxRetries,
         private readonly \Closure $parts,
         private readonly \Closure $jitter,
+        private readonly ?WaitTicker $ticker = null,
     ) {
     }
 
@@ -66,8 +69,9 @@ final class Pipeline
     {
         $options = Options::forResume($rawOptions);
         $state = Resume::decode($token);
+        $held = new Secret($token);
 
-        return $this->annotated($state->idempotencyKey, $token, function (Tracker $tracker) use ($options, $state, $path, $token): array {
+        return $this->annotated($state->idempotencyKey, $held, function (Tracker $tracker) use ($options, $state, $path, $held): array {
             // A path is only sized now (a different size is refused before any request) and opened later,
             // once the job is known to be uploading.
             $early = $path === null ? null : Source::sizeOf($path);
@@ -80,7 +84,7 @@ final class Pipeline
                 throw Resume::jobMissing($missing);
             }
             if ($job['state'] !== self::UPLOADING) {
-                return $this->finish($state->jobId, $options, $token, $job);
+                return $this->finish($state->jobId, $options, $held, $job);
             }
             if ($path === null) {
                 throw Resume::fileRequired();
@@ -122,14 +126,14 @@ final class Pipeline
      * @param  \Closure(Tracker): array<string, mixed>  $run
      * @return array<string, mixed>
      */
-    private function annotated(string $key, ?string $token, \Closure $run): array
+    private function annotated(string $key, ?Secret $token, \Closure $run): array
     {
         $tracker = new Tracker($key, $token);
         try {
             return $run($tracker);
         } catch (HushscriptException $failure) {
             $failure->idempotencyKey ??= $tracker->key;
-            $failure->resumeToken ??= $tracker->token;
+            $failure->resumeToken ??= $tracker->token?->reveal();
 
             throw $failure;
         }
@@ -149,10 +153,10 @@ final class Pipeline
      */
     private function afterCreate(Created $created, Tracker $tracker, Resume $state, ?Source $source, Options $options): array
     {
-        $token = $state->withJob($created->jobId)->encode();
+        $token = new Secret($state->withJob($created->jobId)->encode());
         $tracker->token = $token;
         if ($options->onResumeToken !== null) {
-            ($options->onResumeToken)($token);
+            ($options->onResumeToken)($token->reveal());
         }
         if ($created->state === self::UPLOADING) {
             if ($source === null) {
@@ -186,22 +190,28 @@ final class Pipeline
             $this->jitter,
         );
         $total = $source->size;
-        $uploader->upload(static function (int $sent) use ($options, $total): void {
-            $options->progress(self::uploading(intdiv(min($sent, $total) * 100, max(1, $total)), $sent, $total));
-        });
-        $heartbeat->raiseIfFailed();
-        // One more ping right before complete, so a long last part cannot leave the job idle.
-        $heartbeat->beat();
-        $heartbeat->raiseIfFailed();
-        $body = $uploader->state->partsBody();
-        $this->api->request('POST', $jobPath.'/complete', body: $body);
+        // A request that sleeps between attempts (a Retry-After) must not stop the ping: it is sent from inside the sleep.
+        $this->ticker?->attach($heartbeat->deadline(...), $heartbeat->tick(...));
+        try {
+            $uploader->upload(static function (int $sent) use ($options, $total): void {
+                $options->progress(self::uploading(intdiv(min($sent, $total) * 100, max(1, $total)), $sent, $total));
+            });
+            $heartbeat->raiseIfFailed();
+            // One more ping right before complete, so a long last part cannot leave the job idle.
+            $heartbeat->beat();
+            $heartbeat->raiseIfFailed();
+            $body = $uploader->state->partsBody();
+            $this->api->request('POST', $jobPath.'/complete', body: $body);
+        } finally {
+            $this->ticker?->detach();
+        }
     }
 
     /**
      * @param  array<string, mixed>|null  $first  a job read a moment ago
      * @return array<string, mixed>
      */
-    private function finish(string $jobId, Options $options, string $token, ?array $first): array
+    private function finish(string $jobId, Options $options, Secret $token, ?array $first): array
     {
         $job = Wait::until($this->api, $this->clock, $jobId, $options->waitTimeout, $options->onProgress, $token, $first);
 

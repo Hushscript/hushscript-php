@@ -283,4 +283,44 @@ final class MediaTest extends TestCase
             @unlink($path);
         }
     }
+
+    public function testAFifoIsFileUnreadableWithoutBlocking(): void
+    {
+        if (! function_exists('posix_mkfifo')) {
+            self::markTestSkipped('ext-posix is missing.');
+        }
+        $fifo = sys_get_temp_dir().'/hushscript-fifo-'.bin2hex(random_bytes(4));
+        self::assertTrue(posix_mkfifo($fifo, 0600));
+        try {
+            Source::open($fifo);
+            self::fail('expected a PreflightError');
+        } catch (PreflightError $error) {
+            self::assertSame('file_unreadable', $error->errorCode);
+            self::assertStringContainsString('not a regular file', $error->getMessage());
+        } finally {
+            unlink($fifo);
+        }
+    }
+
+    public function testALargeJunkTailIsNotScannedByteByByte(): void
+    {
+        $frames = (string) file_get_contents(self::path('cbr-20s.mp3'), false, null, 0, 40000);
+        $path = $this->temp('');
+        $handle = fopen($path, 'wb');
+        self::assertIsResource($handle);
+        fwrite($handle, $frames);
+        $block = str_repeat("\0", 1 << 20);
+        for ($megabytes = 0; $megabytes < 24; $megabytes++) {
+            fwrite($handle, $block);
+        }
+        fclose($handle);
+
+        $started = hrtime(true);
+        $seconds = Probe::seconds(Source::open($path));
+        $elapsed = (hrtime(true) - $started) / 1e9;
+
+        self::assertGreaterThan(1.0, $seconds, 'the frames before the junk still count');
+        self::assertLessThan(8.0, $elapsed, 'the junk tail is given up on after a bounded run, not walked to the end');
+    }
 }
+

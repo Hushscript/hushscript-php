@@ -37,7 +37,7 @@ final class Log
         }
     }
 
-    public function attempt(string $method, string $path, ?int $status, int $attempt, float $durationMs, ?float $retryDelay): void
+    public function attempt(string $method, #[\SensitiveParameter] string $path, ?int $status, int $attempt, float $durationMs, ?float $retryDelay): void
     {
         if (! $this->enabled) {
             return;

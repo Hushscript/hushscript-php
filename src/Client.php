@@ -7,6 +7,7 @@ namespace Hushscript;
 use GuzzleHttp\Client as GuzzleClient;
 use Hushscript\Http\RetryMiddleware;
 use Hushscript\Http\RetryPolicy;
+use Hushscript\Http\WaitTicker;
 use Hushscript\Resource\Jobs;
 use Hushscript\Transcribe\GuzzleMultiTransport;
 use Hushscript\Transcribe\PartTransport;
@@ -39,6 +40,7 @@ final class Client
         $inner = $this->config->httpClient === null
             ? self::defaultHttpClient($this->config->timeout)
             : self::withoutRedirects($this->config->httpClient, $log);
+        $ticker = new WaitTicker();
         $transport = new RetryMiddleware(
             $inner,
             $this->config->credentials,
@@ -46,6 +48,7 @@ final class Client
             $this->config->clock,
             $log,
             $this->config->maxRetries,
+            ticker: $ticker,
         );
         $this->api = new Api($transport, $this->config->credentials, $this->config->baseUrl);
         $config = $this->config;
@@ -59,6 +62,7 @@ final class Client
             static fn (): PartTransport => $config->partTransport
                 ?? ($config->httpClient === null && GuzzleMultiTransport::available() ? new GuzzleMultiTransport($config->timeout) : new SyncTransport($inner)),
             RetryPolicy::fullJitter(...),
+            $ticker,
         );
         $this->jobs = new Jobs($this->pipeline);
     }

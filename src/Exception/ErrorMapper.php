@@ -62,7 +62,7 @@ final class ErrorMapper
     }
 
     /** Maps a concrete request (`GET`, `/v1/jobs/abc`) to its Scopes::OPERATIONS key. */
-    public static function operationKey(string $method, string $path): ?string
+    public static function operationKey(string $method, #[\SensitiveParameter] string $path): ?string
     {
         self::$patterns ??= array_map(
             static function (string $key): array {
@@ -94,7 +94,7 @@ final class ErrorMapper
         return preg_match('/^[0-9]{1,9}$/D', $text) === 1 ? (int) $text : null;
     }
 
-    public static function fromResponse(#[\SensitiveParameter] ResponseInterface $response, Credentials $credentials, string $method, string $path): HushscriptException
+    public static function fromResponse(#[\SensitiveParameter] ResponseInterface $response, Credentials $credentials, string $method, #[\SensitiveParameter] string $path): HushscriptException
     {
         $status = $response->getStatusCode();
         $body = self::parseBody((string) $response->getBody());
@@ -130,7 +130,7 @@ final class ErrorMapper
         return $error;
     }
 
-    private static function isJobOrUpload(string $path): bool
+    private static function isJobOrUpload(#[\SensitiveParameter] string $path): bool
     {
         return preg_match('~^/v1/(jobs|uploads)(/|$)~', $path) === 1;
     }

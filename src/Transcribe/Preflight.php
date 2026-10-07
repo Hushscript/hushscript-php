@@ -40,12 +40,12 @@ final class Preflight
             throw new FileLimitError('The file is '.$source->size.' bytes; it must be between 1 byte and 5 GB.', 'size_out_of_range');
         }
         $seconds = $options->durationSeconds ?? Probe::seconds($source);
-        $declared = (int) ceil($seconds);
-        if ($seconds < self::MIN_SECONDS || $declared > self::MAX_SECONDS) {
+        // Compared as a float: casting 1e300 or 9.3e18 to int is undefined.
+        if (! is_finite($seconds) || $seconds < self::MIN_SECONDS || ceil($seconds) > self::MAX_SECONDS) {
             throw new FileLimitError('The file is '.rtrim(rtrim(sprintf('%.3f', $seconds), '0'), '.').' seconds long; it must be between 15 seconds and 10 hours.', 'duration_out_of_range');
         }
 
-        return [$source->size, $declared];
+        return [$source->size, (int) ceil($seconds)];
     }
 
     /**
