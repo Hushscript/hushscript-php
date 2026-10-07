@@ -22,18 +22,6 @@ final class Probe
 
     private const TAIL_BYTES = 65536;
 
-    private const ID3_HEADER = 10;
-
-    private const FRAME_HEADER = 4;
-
-    private const RESYNC_LIMIT = 65536;
-
-    private const MPEG1_BITRATES = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
-
-    private const MPEG2_BITRATES = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
-
-    private const SAMPLE_RATES = [3 => [44100, 48000, 32000], 2 => [22050, 24000, 16000], 0 => [11025, 12000, 8000]];
-
     private function __construct()
     {
     }
@@ -114,72 +102,10 @@ final class Probe
             return null;
         }
         try {
-            $head = (string) fread($handle, self::ID3_HEADER);
-            $start = 0;
-            if (strlen($head) === self::ID3_HEADER && str_starts_with($head, 'ID3')) {
-                $size = 0;
-                for ($index = 6; $index < 10; $index++) {
-                    $size = ($size << 7) | (ord($head[$index]) & 0x7F);
-                }
-                $start = self::ID3_HEADER + $size + ((ord($head[5]) & 0x10) !== 0 ? self::ID3_HEADER : 0);
-            }
-            fseek($handle, $start);
-            $total = 0.0;
-            $frames = 0;
-            $junk = 0;
-            while (true) {
-                $header = fread($handle, self::FRAME_HEADER);
-                if ($header === false || strlen($header) < self::FRAME_HEADER) {
-                    break;
-                }
-                $frame = self::frame($header);
-                if ($frame === null) {
-                    // A run of bytes with no frame in it: past the limit the rest is not audio (the container's
-                    // own figure still counts), so a large junk tail is not walked byte by byte.
-                    $junk++;
-                    if ($junk > self::RESYNC_LIMIT) {
-                        break;
-                    }
-                    fseek($handle, -(self::FRAME_HEADER - 1), SEEK_CUR);
-
-                    continue;
-                }
-                $junk = 0;
-                [$length, $samples, $rate] = $frame;
-                $total += $samples / $rate;
-                $frames++;
-                fseek($handle, $length - self::FRAME_HEADER, SEEK_CUR);
-            }
-
-            return $frames === 0 ? null : $total;
+            return Mp3Scan::seconds($handle);
         } finally {
             fclose($handle);
         }
-    }
-
-    /**
-     * @return array{int, int, int}|null  frame length, samples and sample rate of a Layer III frame header
-     */
-    private static function frame(string $header): ?array
-    {
-        $second = ord($header[1]);
-        if ($header[0] !== "\xFF" || ($second & 0xE0) !== 0xE0) {
-            return null;
-        }
-        $version = ($second >> 3) & 3;
-        $layer = ($second >> 1) & 3;
-        $third = ord($header[2]);
-        $bitrateIndex = $third >> 4;
-        $rateIndex = ($third >> 2) & 3;
-        if ($version === 1 || $layer !== 1 || $bitrateIndex === 0 || $bitrateIndex === 15 || $rateIndex === 3) {
-            return null;
-        }
-        $table = $version === 3 ? self::MPEG1_BITRATES : self::MPEG2_BITRATES;
-        $rate = self::SAMPLE_RATES[$version][$rateIndex];
-        $samples = $version === 3 ? 1152 : 576;
-        $length = intdiv(intdiv($samples, 8) * $table[$bitrateIndex] * 1000, $rate) + (($third >> 1) & 1);
-
-        return [$length, $samples, $rate];
     }
 
     /** granule position of the last Ogg page / 48000 for an Opus stream; null for anything else. */
