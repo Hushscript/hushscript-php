@@ -29,6 +29,9 @@ use Psr\Http\Message\RequestInterface;
 final class PipelineTest extends TestCase
 {
     /** @var list<string> */
+    private static array $handedOut = [];
+
+    /** @var list<string> */
     private array $temp = [];
 
     protected function tearDown(): void
@@ -72,9 +75,30 @@ final class PipelineTest extends TestCase
             // The frames of the SDK; the ones below them are the test runner's own arguments.
             $frames = array_filter($link->getTrace(), static fn (array $frame): bool => str_contains($frame['file'] ?? '', dirname(__DIR__, 2).'/src/'));
             $out .= $link->getMessage()."\n".$link->getTraceAsString()."\n".self::reachable($frames, 0, $seen);
+            // What a log handler or a debugger would print: the SDK frames dumped, each argument exported and serialized.
+            $out .= self::quietly(static fn (): string => print_r($frames, true));
+            foreach ($frames as $frame) {
+                foreach ($frame['args'] ?? [] as $argument) {
+                    $out .= self::quietly(static fn (): string => var_export($argument, true));
+                    $out .= self::quietly(static fn (): string => serialize($argument));
+                }
+            }
         }
 
         return $out;
+    }
+
+    /** @param \Closure(): string $render  a dump that may warn about cycles or refuse to serialize a closure or a Secret */
+    private static function quietly(\Closure $render): string
+    {
+        set_error_handler(static fn (): bool => true);
+        try {
+            return $render();
+        } catch (\Throwable) {
+            return '';
+        } finally {
+            restore_error_handler();
+        }
     }
 
     /** @param array<int, true> $seen */
@@ -751,12 +775,12 @@ final class PipelineTest extends TestCase
         if ($scenario === 'job_failed') {
             $harness->api->on('GET', '/v1/jobs/[^/]+', PipelineHarness::json(200, ['id' => 'job_1', 'state' => 'failed', 'error' => 'boom', 'failure_kind' => 'x']));
         }
-        /** @var \ArrayObject<int, string> $handedOut */
-        $handedOut = new \ArrayObject();
+        // Kept in a static, not in the closure: what the caller's own callback captured is the caller's.
+        self::$handedOut = [];
 
         try {
-            self::go($harness, ['on_resume_token' => static function (string $value) use ($handedOut): void {
-                $handedOut->append($value);
+            self::go($harness, ['on_resume_token' => static function (string $value): void {
+                self::$handedOut[] = $value;
             }]);
             self::fail('expected a failure');
         } catch (HushscriptException $error) {
@@ -764,7 +788,7 @@ final class PipelineTest extends TestCase
             $harness->parts->sent = [];
             $harness->api->requests = [];
             $surface = self::surface($error);
-            $token = $handedOut->getArrayCopy()[0] ?? null;
+            $token = self::$handedOut[0] ?? null;
             self::assertIsString($token, 'the create succeeded, so a resume token was handed out');
             foreach (['X-Amz-Signature', 'SECRET', 'r2.example.com', \Hushscript\Tests\Support\Tokens::TEST, $token] as $needle) {
                 $at = strpos($surface, $needle);

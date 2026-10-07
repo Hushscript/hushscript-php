@@ -27,7 +27,7 @@ final class Shape
     }
 
     /** @return array<string, mixed> */
-    public static function record(mixed $value, string $what): array
+    public static function record(#[\SensitiveParameter] mixed $value, string $what): array
     {
         if (! is_array($value) || $value === [] || array_is_list($value)) {
             throw self::bad($what);

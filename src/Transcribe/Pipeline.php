@@ -151,7 +151,7 @@ final class Pipeline
      *
      * @return array<string, mixed>
      */
-    private function afterCreate(Created $created, Tracker $tracker, Resume $state, ?Source $source, Options $options): array
+    private function afterCreate(#[\SensitiveParameter] Created $created, Tracker $tracker, Resume $state, ?Source $source, Options $options): array
     {
         $token = new Secret($state->withJob($created->jobId)->encode());
         $tracker->token = $token;
@@ -168,7 +168,7 @@ final class Pipeline
         return $this->finish($created->jobId, $options, $token, null);
     }
 
-    private function upload(Created $created, Source $source, Options $options): void
+    private function upload(#[\SensitiveParameter] Created $created, Source $source, Options $options): void
     {
         $jobPath = '/v1/uploads/'.Shape::segment($created->jobId, 'job id');
         $heartbeat = new Heartbeat($this->clock, function () use ($jobPath): void {
@@ -211,7 +211,7 @@ final class Pipeline
      * @param  array<string, mixed>|null  $first  a job read a moment ago
      * @return array<string, mixed>
      */
-    private function finish(string $jobId, Options $options, Secret $token, ?array $first): array
+    private function finish(string $jobId, Options $options, Secret $token, #[\SensitiveParameter] ?array $first): array
     {
         $job = Wait::until($this->api, $this->clock, $jobId, $options->waitTimeout, $options->onProgress, $token, $first);
 
@@ -225,7 +225,7 @@ final class Pipeline
      * @param  array<string, mixed>  $body
      * @return array<string, mixed>
      */
-    private function toTranscript(array $body): array
+    private function toTranscript(#[\SensitiveParameter] array $body): array
     {
         return $body;
     }

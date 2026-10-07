@@ -215,7 +215,7 @@ final class Options
     }
 
     /** @param array<string, mixed> $raw */
-    private static function optionalString(array $raw, string $name): ?string
+    private static function optionalString(#[\SensitiveParameter] array $raw, string $name): ?string
     {
         $value = $raw[$name] ?? null;
         if ($value !== null && ! is_string($value)) {
@@ -226,7 +226,7 @@ final class Options
     }
 
     /** @param array<string, mixed> $raw */
-    private static function flag(array $raw, string $name, bool $default): bool
+    private static function flag(#[\SensitiveParameter] array $raw, string $name, bool $default): bool
     {
         $value = $raw[$name] ?? $default;
         if (! is_bool($value)) {
@@ -240,7 +240,7 @@ final class Options
      * @param  array<string, mixed>  $raw
      * @return list<string>
      */
-    private static function strings(array $raw, string $name): array
+    private static function strings(#[\SensitiveParameter] array $raw, string $name): array
     {
         $value = $raw[$name] ?? [];
         if (! is_array($value) || ! array_is_list($value)) {
@@ -256,7 +256,7 @@ final class Options
     }
 
     /** @param array<string, mixed> $raw */
-    private static function callback(array $raw, string $name): ?\Closure
+    private static function callback(#[\SensitiveParameter] array $raw, string $name): ?\Closure
     {
         $value = $raw[$name] ?? null;
         if ($value === null) {

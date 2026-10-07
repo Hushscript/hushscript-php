@@ -129,7 +129,7 @@ final class Uploader
      *
      * @param  array<int, PartRun>  $running
      */
-    private function look(array $running): void
+    private function look(#[\SensitiveParameter] array $running): void
     {
         $inFlight = 0;
         foreach ($running as $run) {
@@ -157,7 +157,7 @@ final class Uploader
      *
      * @param  array<int, PartRun>  $running
      */
-    private function pass(array $running): void
+    private function pass(#[\SensitiveParameter] array $running): void
     {
         $inFlight = 0;
         $deadline = $this->heartbeat->deadline();
@@ -201,10 +201,10 @@ final class Uploader
         $this->blocked = $promise->getState() !== PromiseInterface::PENDING ? $this->clock->now() - $run->startedAt : 0.0;
         $run->promise = $promise;
         $promise->then(
-            static function (ResponseInterface $response) use ($run): void {
+            static function (#[\SensitiveParameter] ResponseInterface $response) use ($run): void {
                 $run->answer = $response;
             },
-            static function (\Throwable $failure) use ($run): void {
+            static function (#[\SensitiveParameter] \Throwable $failure) use ($run): void {
                 $run->answer = $failure instanceof PartFailure ? $failure : PartFailure::of($failure);
             },
         );
@@ -294,7 +294,7 @@ final class Uploader
         $this->directGaveUp($run, $status);
     }
 
-    private function acknowledged(PartRun $run, ResponseInterface $response): void
+    private function acknowledged(PartRun $run, #[\SensitiveParameter] ResponseInterface $response): void
     {
         if ($run->proxied) {
             $run->done = true;
@@ -342,7 +342,7 @@ final class Uploader
      * terminal 4xx once a direct PUT has succeeded is the answer itself; otherwise the part goes
      * through the API while no direct PUT has succeeded, and is `parts_exhausted` after one has.
      */
-    private function urlsFailed(PartRun $run, HushscriptException $failure): void
+    private function urlsFailed(PartRun $run, #[\SensitiveParameter] HushscriptException $failure): void
     {
         if ($failure instanceof UploadError && $failure->errorCode === 'part_url_missing') {
             throw $failure;
@@ -360,7 +360,7 @@ final class Uploader
     }
 
     /** A 4xx other than 429 (which was already retried): the API said no, and asking again will not change it. */
-    private static function terminal(HushscriptException $failure): bool
+    private static function terminal(#[\SensitiveParameter] HushscriptException $failure): bool
     {
         return $failure->status !== null && $failure->status >= 400 && $failure->status < 500 && $failure->status !== 429;
     }
@@ -386,7 +386,7 @@ final class Uploader
         $this->toProxied($run);
     }
 
-    private function proxiedFailure(PartRun $run, ResponseInterface|PartFailure|null $answer): \Throwable
+    private function proxiedFailure(PartRun $run, #[\SensitiveParameter] ResponseInterface|PartFailure|null $answer): \Throwable
     {
         $path = $this->proxiedPath($run->n);
         if ($answer instanceof ResponseInterface) {

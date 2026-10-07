@@ -48,7 +48,7 @@ final class Wait
      * @param  (\Closure(array<string, mixed>): void)|null  $onProgress
      * @return array<string, mixed>
      */
-    public static function until(Api $api, Clock $clock, string $jobId, float $waitTimeout, ?\Closure $onProgress, ?Secret $token, ?array $first = null): array
+    public static function until(Api $api, Clock $clock, string $jobId, float $waitTimeout, ?\Closure $onProgress, ?Secret $token, #[\SensitiveParameter] ?array $first = null): array
     {
         $started = $clock->now();
         $delay = self::FIRST_DELAY;
@@ -81,7 +81,7 @@ final class Wait
      *
      * @param  array<string, mixed>  $job
      */
-    public static function transcriptId(array $job): string
+    public static function transcriptId(#[\SensitiveParameter] array $job): string
     {
         if (($job['state'] ?? null) === 'failed') {
             $error = $job['error'] ?? null;

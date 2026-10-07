@@ -255,7 +255,7 @@ final class RetryMiddleware implements ClientInterface
      * after the body was written is "sent", whatever its code. A custom client's errors are sent
      * unless they carry a cURL errno that proves otherwise.
      */
-    private static function provablyNotSent(\Throwable $failure): bool
+    private static function provablyNotSent(#[\SensitiveParameter] \Throwable $failure): bool
     {
         if (! method_exists($failure, 'getHandlerContext')) {
             return false;
