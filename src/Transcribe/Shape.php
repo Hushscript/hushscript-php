@@ -16,9 +16,10 @@ final class Shape
     {
     }
 
-    public static function bad(string $what): ApiError
+    /** An unusable 2xx body: `bad_response` with the status the API actually answered. */
+    public static function bad(string $what, int $status = 200): ApiError
     {
-        return new ApiError('The API answered with '.$what.' the SDK cannot use.', 'bad_response', status: 200);
+        return new ApiError('The API answered '.$status.' with '.$what.' the SDK cannot use.', 'bad_response', status: $status);
     }
 
     public static function positiveInt(mixed $value): ?int
@@ -26,21 +27,14 @@ final class Shape
         return is_int($value) && $value >= 1 ? $value : null;
     }
 
-    /** @return array<string, mixed> */
-    public static function record(mixed $value, string $what): array
-    {
-        if (! is_array($value) || $value === [] || array_is_list($value)) {
-            throw self::bad($what);
-        }
-        /** @var array<string, mixed> $value */
-        return $value;
-    }
-
-    /** An id that goes into a URL path: non-empty, not a dot segment, percent-encoded. */
+    /**
+     * An id that goes into a URL path as one segment: non-empty, valid UTF-8, not a dot segment and without a
+     * slash or backslash (which a client or proxy may treat as a separator once decoded), percent-encoded.
+     */
     public static function segment(mixed $id, string $name = 'id'): string
     {
-        if (! is_string($id) || $id === '' || $id === '.' || $id === '..' || preg_match('//u', $id) !== 1) {
-            throw new PreflightError($name.' must be a non-empty string that is not "." or "..".', 'invalid_option');
+        if (! is_string($id) || $id === '' || $id === '.' || $id === '..' || preg_match('//u', $id) !== 1 || strpbrk($id, '/\\') !== false) {
+            throw new PreflightError($name.' must be a non-empty string without a slash that is not "." or "..".', 'invalid_option');
         }
 
         return rawurlencode($id);

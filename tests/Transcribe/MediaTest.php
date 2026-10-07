@@ -291,13 +291,26 @@ final class MediaTest extends TestCase
         if ($status !== 0) {
             self::markTestSkipped('mkfifo is not available.');
         }
+        // Run in a child that is killed after 10 s: a regression would block in open() for good, and must fail instead of hanging.
+        $script = 'require $argv[1]; try { Hushscript\\Transcribe\\Source::open($argv[2]); echo "opened"; } catch (Hushscript\\Exception\\PreflightError $e) { echo $e->errorCode, "|", $e->getMessage(); }';
+        $process = proc_open([PHP_BINARY, '-r', $script, dirname(__DIR__, 2).'/vendor/autoload.php', $fifo], [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
+        self::assertIsResource($process);
         try {
-            Source::open($fifo);
-            self::fail('expected a PreflightError');
-        } catch (PreflightError $error) {
-            self::assertSame('file_unreadable', $error->errorCode);
-            self::assertStringContainsString('not a regular file', $error->getMessage());
+            stream_set_blocking($pipes[1], false);
+            $deadline = microtime(true) + 10.0;
+            while (microtime(true) < $deadline && (proc_get_status($process)['running'])) {
+                usleep(20000);
+            }
+            $finished = ! proc_get_status($process)['running'];
+            $output = (string) stream_get_contents($pipes[1]);
+            if (! $finished) {
+                proc_terminate($process, 9);
+            }
+            self::assertTrue($finished, 'Source::open blocked on a FIFO');
+            self::assertStringStartsWith('file_unreadable|', $output);
+            self::assertStringContainsString('not a regular file', $output);
         } finally {
+            proc_close($process);
             unlink($fifo);
         }
     }
@@ -321,5 +334,59 @@ final class MediaTest extends TestCase
 
         self::assertGreaterThan(1.0, $seconds, 'the frames before the junk still count');
         self::assertLessThan(8.0, $elapsed, 'the junk tail is given up on after a bounded run, not walked to the end');
+    }
+
+    /** A well-formed ID3v2.4 tag of `$bytes` bytes in all. */
+    private static function tag(int $bytes): string
+    {
+        $size = $bytes - 10;
+        $syncsafe = chr(($size >> 21) & 0x7F).chr(($size >> 14) & 0x7F).chr(($size >> 7) & 0x7F).chr($size & 0x7F);
+
+        return "ID3\x04\x00\x00".$syncsafe.str_repeat("\0", $size);
+    }
+
+    /** @return iterable<string, array{int}> */
+    public static function midFileTags(): iterable
+    {
+        yield '70 KB tag' => [70 * 1024];
+        yield '300 KB tag' => [300 * 1024];
+    }
+
+    #[DataProvider('midFileTags')]
+    public function testAnId3TagBetweenTwoFilesIsSkippedByItsSizeAndNothingAfterItIsLost(int $bytes): void
+    {
+        $first = self::path('cbr-20s.mp3');
+        $second = self::path('vbr-xing-61s.mp3');
+        $sum = Probe::seconds(Source::open($first)) + Probe::seconds(Source::open($second));
+        $path = $this->temp('');
+        file_put_contents($path, (string) file_get_contents($first).self::tag($bytes).(string) file_get_contents($second));
+
+        $seconds = Probe::seconds(Source::open($path));
+
+        self::assertGreaterThanOrEqual($sum - 0.001, $seconds, 'never under the sum of the two parts');
+        self::assertLessThan($sum + 1.0, $seconds);
+    }
+
+    public function testAnId3LookalikeThatClaimsMoreBytesThanTheFileHasSkipsNothing(): void
+    {
+        $first = self::path('cbr-20s.mp3');
+        $second = self::path('cbr-61s.mp3');
+        $sum = Probe::seconds(Source::open($first)) + Probe::seconds(Source::open($second));
+        $liar = "ID3\x04\x00\x00\x7F\x7F\x7F\x7F";
+        $path = $this->temp('');
+        file_put_contents($path, (string) file_get_contents($first).$liar.(string) file_get_contents($second));
+
+        self::assertGreaterThanOrEqual($sum - 0.001, Probe::seconds(Source::open($path)));
+    }
+
+    public function testJunkOfAnyLengthBetweenFramesNeverHidesTheFramesAfterIt(): void
+    {
+        $first = self::path('cbr-20s.mp3');
+        $second = self::path('cbr-20s.mp3');
+        $sum = Probe::seconds(Source::open($first)) * 2;
+        $path = $this->temp('');
+        file_put_contents($path, (string) file_get_contents($first).str_repeat("\0", 3 * (1 << 20) + 17).(string) file_get_contents($second));
+
+        self::assertGreaterThanOrEqual($sum - 0.001, Probe::seconds(Source::open($path)), 'there is no give-up point inside the file');
     }
 }

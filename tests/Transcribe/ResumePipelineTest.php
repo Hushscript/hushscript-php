@@ -44,7 +44,7 @@ final class ResumePipelineTest extends TestCase
 
         $transcript = $harness->pipeline->resume(self::token($harness), null, []);
 
-        self::assertSame('tr_1', $transcript['id']);
+        self::assertSame('tr_1', $transcript->id);
         self::assertSame([], $harness->api->to('POST', '/v1/uploads'));
         self::assertSame([], $harness->parts->sent);
     }
@@ -64,7 +64,7 @@ final class ResumePipelineTest extends TestCase
             },
         ]);
 
-        self::assertSame('tr_1', $transcript['id']);
+        self::assertSame('tr_1', $transcript->id);
         $creates = $harness->api->to('POST', '/v1/uploads');
         self::assertCount(1, $creates);
         $body = json_decode((string) $creates[0]->getBody(), true);
@@ -132,7 +132,7 @@ final class ResumePipelineTest extends TestCase
 
         $transcript = $harness->pipeline->resume(self::token($harness), '/nonexistent/never-opened.mp3', []);
 
-        self::assertSame('tr_1', $transcript['id']);
+        self::assertSame('tr_1', $transcript->id);
     }
 
     public function testAnUnreadablePathOfAnUploadingJobIsFileUnreadable(): void

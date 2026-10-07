@@ -8,18 +8,21 @@ use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Uri;
 use GuzzleHttp\Psr7\Utils as Psr7;
-use Hushscript\Api;
 use Hushscript\Clock;
 use Hushscript\Credentials;
+use Hushscript\Exception\ApiError;
 use Hushscript\Exception\ErrorMapper;
 use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\NetworkError;
 use Hushscript\Exception\UploadError;
+use Hushscript\Http\Body;
+use Hushscript\Http\Exchange;
 use Hushscript\Http\Outcome;
 use Hushscript\Http\RetryClass;
 use Hushscript\Http\RetryPolicy;
 use Hushscript\IdleClock;
 use Hushscript\Log;
+use Hushscript\Redact;
 use Hushscript\Secret;
 use Hushscript\Version;
 use Psr\Http\Message\ResponseInterface;
@@ -46,7 +49,7 @@ final class Uploader
 
     private readonly UrlBook $book;
 
-    /** The longest a part request has held the loop when its transport answered before `send` returned. */
+    /** How long the latest part request held the loop, when its transport answered before `send` returned; 0 for one that is still in flight. */
     private float $blocked = 0.0;
 
     /**
@@ -54,7 +57,7 @@ final class Uploader
      */
     public function __construct(
         private readonly PartTransport $transport,
-        private readonly Api $api,
+        private readonly Exchange $api,
         private readonly Credentials $credentials,
         private readonly Clock $clock,
         private readonly Log $log,
@@ -129,7 +132,7 @@ final class Uploader
      *
      * @param  array<int, PartRun>  $running
      */
-    private function look(array $running): void
+    private function look(#[\SensitiveParameter] array $running): void
     {
         $inFlight = 0;
         foreach ($running as $run) {
@@ -157,7 +160,7 @@ final class Uploader
      *
      * @param  array<int, PartRun>  $running
      */
-    private function pass(array $running): void
+    private function pass(#[\SensitiveParameter] array $running): void
     {
         $inFlight = 0;
         $deadline = $this->heartbeat->deadline();
@@ -197,15 +200,14 @@ final class Uploader
         $request = $run->proxied ? $this->proxiedRequest($run) : $this->directRequest($run);
         $run->startedAt = $this->clock->now();
         $promise = $this->transport->send($request, self::PART_TIMEOUT);
-        if ($promise->getState() !== PromiseInterface::PENDING) {
-            $this->blocked = max($this->blocked, $this->clock->now() - $run->startedAt);
-        }
+        // The latest part, not the longest: one slow part must not make every later start ping.
+        $this->blocked = $promise->getState() !== PromiseInterface::PENDING ? $this->clock->now() - $run->startedAt : 0.0;
         $run->promise = $promise;
         $promise->then(
-            static function (ResponseInterface $response) use ($run): void {
+            static function (#[\SensitiveParameter] ResponseInterface $response) use ($run): void {
                 $run->answer = $response;
             },
-            static function (\Throwable $failure) use ($run): void {
+            static function (#[\SensitiveParameter] \Throwable $failure) use ($run): void {
                 $run->answer = $failure instanceof PartFailure ? $failure : PartFailure::of($failure);
             },
         );
@@ -224,10 +226,10 @@ final class Uploader
         try {
             $uri = new Uri($run->url?->reveal() ?? '');
         } catch (\InvalidArgumentException) {
-            throw Shape::bad('an upload URL');
+            throw Shape::bad('an upload URL', $this->plan->status);
         }
         if (! in_array(strtolower($uri->getScheme()), ['http', 'https'], true) || $uri->getHost() === '') {
-            throw Shape::bad('an upload URL');
+            throw Shape::bad('an upload URL', $this->plan->status);
         }
 
         return new Request('PUT', $uri, ['User-Agent' => self::agent()], Psr7::streamFor($run->data));
@@ -292,10 +294,10 @@ final class Uploader
         if ($run->proxied) {
             throw $this->proxiedFailure($run, $answer);
         }
-        $this->directGaveUp($run, $status);
+        $this->directGaveUp($run, $status, $answer);
     }
 
-    private function acknowledged(PartRun $run, ResponseInterface $response): void
+    private function acknowledged(PartRun $run, #[\SensitiveParameter] ResponseInterface $response): void
     {
         if ($run->proxied) {
             $run->done = true;
@@ -318,11 +320,11 @@ final class Uploader
         $run->done = true;
     }
 
-    private function directGaveUp(PartRun $run, ?int $status): void
+    private function directGaveUp(PartRun $run, ?int $status, #[\SensitiveParameter] ResponseInterface|PartFailure|null $answer): void
     {
         $action = $this->state->decide($run, $status);
         if ($action === UploadState::EXHAUSTED) {
-            throw new UploadError('Part '.$run->n.' could not be uploaded after its retries and a fresh URL.', 'parts_exhausted');
+            throw new UploadError('Part '.$run->n.' could not be uploaded after its retries and a fresh URL.', 'parts_exhausted', previous: $this->directFailure($run, $answer));
         }
         if ($action === UploadState::FALLBACK) {
             $this->toProxied($run);
@@ -338,12 +340,23 @@ final class Uploader
         $this->start($run);
     }
 
+    /** What the last direct PUT of the part came to, as a cause that holds no URL or signature. */
+    private function directFailure(PartRun $run, #[\SensitiveParameter] ResponseInterface|PartFailure|null $answer): \Throwable
+    {
+        $where = 'The direct upload of part '.$run->n;
+        if ($answer instanceof ResponseInterface) {
+            return new ApiError($where.' was answered with '.$answer->getStatusCode().'.', 'http_'.$answer->getStatusCode(), status: $answer->getStatusCode());
+        }
+
+        return new NetworkError($where.' failed: '.Redact::text($answer instanceof PartFailure ? $answer->getMessage() : 'no answer').'.');
+    }
+
     /**
      * The part-urls fetch behind a part failed (spec 8.4, R8, as in the Go and TypeScript SDKs): a
      * terminal 4xx once a direct PUT has succeeded is the answer itself; otherwise the part goes
      * through the API while no direct PUT has succeeded, and is `parts_exhausted` after one has.
      */
-    private function urlsFailed(PartRun $run, HushscriptException $failure): void
+    private function urlsFailed(PartRun $run, #[\SensitiveParameter] HushscriptException $failure): void
     {
         if ($failure instanceof UploadError && $failure->errorCode === 'part_url_missing') {
             throw $failure;
@@ -361,7 +374,7 @@ final class Uploader
     }
 
     /** A 4xx other than 429 (which was already retried): the API said no, and asking again will not change it. */
-    private static function terminal(HushscriptException $failure): bool
+    private static function terminal(#[\SensitiveParameter] HushscriptException $failure): bool
     {
         return $failure->status !== null && $failure->status >= 400 && $failure->status < 500 && $failure->status !== 429;
     }
@@ -387,7 +400,7 @@ final class Uploader
         $this->toProxied($run);
     }
 
-    private function proxiedFailure(PartRun $run, ResponseInterface|PartFailure|null $answer): \Throwable
+    private function proxiedFailure(PartRun $run, #[\SensitiveParameter] ResponseInterface|PartFailure|null $answer): \Throwable
     {
         $path = $this->proxiedPath($run->n);
         if ($answer instanceof ResponseInterface) {
@@ -442,8 +455,7 @@ final class Uploader
      */
     private function fetch(int $start, bool $advance): void
     {
-        $body = $this->api->requestOrNull('GET', '/v1/uploads/'.Shape::segment($this->jobId, 'job id').'/part-urls', ['start' => $start]);
-        $plan = $body === null ? null : Plan::parse(Shape::record($body, 'a part URL page'));
+        $plan = $this->api->fetchOrNull('GET', '/v1/uploads/'.Shape::segment($this->jobId, 'job id').'/part-urls', ['start' => $start], static fn (Body $page, int $status): Plan => Plan::parse($page->raw(), $status));
         if ($plan === null || $plan->urls() === []) {
             $this->book->direct = false;
 

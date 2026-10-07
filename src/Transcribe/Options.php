@@ -39,6 +39,8 @@ final class Options
 
     private const WAIT = ['wait_timeout', 'on_progress'];
 
+    public readonly Callbacks $callbacks;
+
     /**
      * @param  list<string>  $translateTo
      * @param  list<string>  $keyterms
@@ -63,6 +65,7 @@ final class Options
         public readonly ?\Closure $onProgress,
         public readonly ?\Closure $onResumeToken,
     ) {
+        $this->callbacks = new Callbacks();
     }
 
     /** @param array<string, mixed> $raw */
@@ -205,8 +208,26 @@ final class Options
     public function progress(array $progress): void
     {
         if ($this->onProgress !== null) {
-            ($this->onProgress)($progress);
+            $this->callbacks->call($this->onProgress, $progress);
         }
+    }
+
+    /** The resume token goes to the caller before anything else happens with the job. */
+    public function resumeToken(#[\SensitiveParameter] string $token): void
+    {
+        if ($this->onResumeToken !== null) {
+            $this->callbacks->call($this->onResumeToken, $token);
+        }
+    }
+
+    /**
+     * The progress callback as the polling loop calls it, or null.
+     *
+     * @return (\Closure(array<string, mixed>): void)|null
+     */
+    public function progressSink(): ?\Closure
+    {
+        return $this->onProgress === null ? null : $this->progress(...);
     }
 
     private static function positiveNumber(mixed $value): ?float
@@ -215,7 +236,7 @@ final class Options
     }
 
     /** @param array<string, mixed> $raw */
-    private static function optionalString(array $raw, string $name): ?string
+    private static function optionalString(#[\SensitiveParameter] array $raw, string $name): ?string
     {
         $value = $raw[$name] ?? null;
         if ($value !== null && ! is_string($value)) {
@@ -226,7 +247,7 @@ final class Options
     }
 
     /** @param array<string, mixed> $raw */
-    private static function flag(array $raw, string $name, bool $default): bool
+    private static function flag(#[\SensitiveParameter] array $raw, string $name, bool $default): bool
     {
         $value = $raw[$name] ?? $default;
         if (! is_bool($value)) {
@@ -240,7 +261,7 @@ final class Options
      * @param  array<string, mixed>  $raw
      * @return list<string>
      */
-    private static function strings(array $raw, string $name): array
+    private static function strings(#[\SensitiveParameter] array $raw, string $name): array
     {
         $value = $raw[$name] ?? [];
         if (! is_array($value) || ! array_is_list($value)) {
@@ -256,7 +277,7 @@ final class Options
     }
 
     /** @param array<string, mixed> $raw */
-    private static function callback(array $raw, string $name): ?\Closure
+    private static function callback(#[\SensitiveParameter] array $raw, string $name): ?\Closure
     {
         $value = $raw[$name] ?? null;
         if ($value === null) {
@@ -267,6 +288,22 @@ final class Options
         }
 
         return \Closure::fromCallable($value);
+    }
+
+    /**
+     * The options without the caller's callbacks, whose captured variables could hold anything (a resume token among them).
+     *
+     * @return array<mixed>
+     */
+    public function __debugInfo(): array
+    {
+        $fields = get_object_vars($this);
+        unset($fields['callbacks']);
+        foreach (['onProgress', 'onResumeToken'] as $callback) {
+            $fields[$callback] = $fields[$callback] === null ? null : '…[callback]';
+        }
+
+        return $fields;
     }
 
     private static function invalid(string $message): PreflightError

@@ -44,7 +44,8 @@ final class Credentials
             if ($token === '') {
                 continue;
             }
-            $text = str_replace($token, Redact::MARKER, $text);
+            // The whole token, as it is and percent-encoded, in any letter case.
+            $text = str_ireplace([$token, rawurlencode($token)], Redact::MARKER, $text);
             // An API that echoes only the secret half is just as much a leak.
             $position = strpos($token, 'pat.');
             if ($position !== false) {
@@ -52,7 +53,7 @@ final class Credentials
                 $dot = strrpos($afterPrefix, '.');
                 foreach ($dot === false ? [$afterPrefix] : [$afterPrefix, substr($afterPrefix, $dot + 1)] as $tail) {
                     if (strlen($tail) >= self::MIN_SECRET_TAIL) {
-                        $text = str_replace($tail, Redact::MARKER, $text);
+                        $text = str_ireplace([$tail, rawurlencode($tail)], Redact::MARKER, $text);
                     }
                 }
             }

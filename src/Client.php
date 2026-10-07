@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace Hushscript;
 
 use GuzzleHttp\Client as GuzzleClient;
+use Hushscript\Http\Exchange;
 use Hushscript\Http\RetryMiddleware;
 use Hushscript\Http\RetryPolicy;
 use Hushscript\Http\WaitTicker;
+use Hushscript\Resource\Account as AccountResource;
 use Hushscript\Resource\Jobs;
+use Hushscript\Resource\Transcripts;
 use Hushscript\Transcribe\GuzzleMultiTransport;
 use Hushscript\Transcribe\PartTransport;
 use Hushscript\Transcribe\Pipeline;
@@ -27,6 +30,10 @@ final class Client
     private readonly Pipeline $pipeline;
 
     private readonly Jobs $jobs;
+
+    private readonly Transcripts $transcripts;
+
+    private readonly AccountResource $accountResource;
 
     /**
      * @param  array<string, mixed>  $options  base_url, timeout, max_retries, log_level, clock, http_client (a PSR-18 client), part_transport (advanced: how part uploads are sent)
@@ -50,10 +57,11 @@ final class Client
             $this->config->maxRetries,
             ticker: $ticker,
         );
-        $this->api = new Api($transport, $this->config->credentials, $this->config->baseUrl);
+        $exchange = new Exchange($transport, $this->config->credentials, $this->config->baseUrl);
+        $this->api = new Api($exchange);
         $config = $this->config;
         $this->pipeline = new Pipeline(
-            $this->api,
+            $exchange,
             $config->credentials,
             $config->baseUrl,
             $config->clock,
@@ -64,7 +72,9 @@ final class Client
             RetryPolicy::fullJitter(...),
             $ticker,
         );
-        $this->jobs = new Jobs($this->pipeline);
+        $this->jobs = new Jobs($exchange, $this->pipeline);
+        $this->transcripts = new Transcripts($exchange);
+        $this->accountResource = new AccountResource($exchange);
     }
 
     public function api(): Api
@@ -80,11 +90,10 @@ final class Client
      * @param  array<string, mixed>  $options  title, language, speakers, translate_to, keyterms, prompt, medical,
      *                                         multichannel, auto_insights, matter_code, duration_seconds,
      *                                         idempotency_key, concurrency, wait_timeout, on_progress, on_resume_token
-     * @return array<string, mixed>  the transcript as the API sent it
      *
      * @throws \Hushscript\Exception\HushscriptException
      */
-    public function transcribe(string $path, array $options = []): array
+    public function transcribe(string $path, array $options = []): Transcript
     {
         return $this->pipeline->transcribe($path, $options);
     }
@@ -95,11 +104,10 @@ final class Client
      *
      * @param  array<string, mixed>|string|null  $file  a path, or the options when no file is given
      * @param  array<string, mixed>  $options  concurrency, wait_timeout, on_progress
-     * @return array<string, mixed>
      *
      * @throws \Hushscript\Exception\HushscriptException
      */
-    public function resume(#[\SensitiveParameter] string $token, array|string|null $file = null, array $options = []): array
+    public function resume(#[\SensitiveParameter] string $token, array|string|null $file = null, array $options = []): Transcript
     {
         if (is_array($file)) {
             return $this->pipeline->resume($token, null, $file);
@@ -111,6 +119,27 @@ final class Client
     public function jobs(): Jobs
     {
         return $this->jobs;
+    }
+
+    public function transcripts(): Transcripts
+    {
+        return $this->transcripts;
+    }
+
+    /**
+     * What can be spent now (spec 6.3): `seconds` is already net of holds, not "balance minus held".
+     *
+     * @throws \Hushscript\Exception\HushscriptException
+     */
+    public function balance(): Balance
+    {
+        return $this->accountResource->balance();
+    }
+
+    /** @throws \Hushscript\Exception\HushscriptException */
+    public function account(): Account
+    {
+        return $this->accountResource->account();
     }
 
     /**

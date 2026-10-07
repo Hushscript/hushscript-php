@@ -26,6 +26,7 @@ final class Plan
         public readonly int $totalParts,
         #[\SensitiveParameter] array $urls,
         public readonly ?int $nextPart,
+        public readonly int $status = 200,
     ) {
         self::$urls ??= new \WeakMap();
         self::$urls[$this] = $urls;
@@ -48,29 +49,29 @@ final class Plan
      *
      * @throws \Hushscript\Exception\ApiError bad_response when the plan cannot be used
      */
-    public static function parse(#[\SensitiveParameter] array $fields): self
+    public static function parse(#[\SensitiveParameter] array $fields, int $status = 200): self
     {
         $partSize = Shape::positiveInt($fields['part_size_bytes'] ?? null);
         $total = Shape::positiveInt($fields['total_parts'] ?? null);
         $next = $fields['next_part_number'] ?? null;
         if ($partSize === null || $total === null || ($next !== null && Shape::positiveInt($next) === null)) {
-            throw Shape::bad('an upload plan');
+            throw Shape::bad('an upload plan', $status);
         }
         $urls = [];
         $listed = $fields['part_urls'] ?? [];
         if (! is_array($listed)) {
-            throw Shape::bad('an upload plan');
+            throw Shape::bad('an upload plan', $status);
         }
         foreach ($listed as $item) {
             $n = is_array($item) ? Shape::positiveInt($item['n'] ?? null) : null;
             $url = is_array($item) ? ($item['url'] ?? null) : null;
             if ($n === null || ! is_string($url) || $url === '') {
-                throw Shape::bad('a part URL list');
+                throw Shape::bad('a part URL list', $status);
             }
             $urls[$n] = new Secret($url);
         }
 
-        return new self($partSize, $total, $urls, is_int($next) ? $next : null);
+        return new self($partSize, $total, $urls, is_int($next) ? $next : null, $status);
     }
 
     /** The plan checked against the file: one part per `part_size` bytes, no more and no fewer. */

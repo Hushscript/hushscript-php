@@ -85,13 +85,13 @@ final class HintTest extends TestCase
     public function testMinutesRoundTheRightWay(): void
     {
         self::assertSame(
-            'Not enough minutes: 2 needed, 0 available. Buy a pack with hs.buy("300min") or in the app.',
+            'Not enough minutes: 2 needed, 0 available. Buy a pack with the SDK\'s buy method or in the app.',
             Hint::render('insufficient_balance', ['needed_seconds' => 61, 'balance_seconds' => 59.0]),
         );
     }
 
     public function testNonNumericSecondsAreIgnored(): void
     {
-        self::assertSame('Buy a pack with hs.buy("300min") or in the app.', Hint::render('insufficient_balance', ['needed_seconds' => '61', 'balance_seconds' => 59]));
+        self::assertSame('Buy a pack with the SDK\'s buy method or in the app.', Hint::render('insufficient_balance', ['needed_seconds' => '61', 'balance_seconds' => 59]));
     }
 }

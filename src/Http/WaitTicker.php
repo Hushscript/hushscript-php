@@ -20,6 +20,8 @@ final class WaitTicker
     /** @var (\Closure(): void)|null */
     private ?\Closure $tick = null;
 
+    private bool $ticking = false;
+
     /**
      * @param  \Closure(): float  $deadline  clock time the work is next due; INF when it never is
      * @param  \Closure(): void  $tick  does the work if it is due
@@ -40,14 +42,21 @@ final class WaitTicker
     {
         $deadline = $this->deadline;
         $tick = $this->tick;
-        if ($deadline === null || $tick === null) {
+        // A sleep inside the attached work (a ping that is itself retried after a Retry-After) is a plain
+        // sleep: the work does not start itself again from within.
+        if ($deadline === null || $tick === null || $this->ticking) {
             $clock->sleep($seconds);
 
             return;
         }
         $end = $clock->now() + $seconds;
         while (true) {
-            $tick();
+            $this->ticking = true;
+            try {
+                $tick();
+            } finally {
+                $this->ticking = false;
+            }
             $left = $end - $clock->now();
             if ($left <= 0) {
                 return;

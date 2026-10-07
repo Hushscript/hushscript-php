@@ -22,12 +22,16 @@ use Hushscript\Tests\Support\FakeIdleClock;
 use Hushscript\Tests\Support\PipelineHarness;
 use Hushscript\Transcribe\PartFailure;
 use Hushscript\Transcribe\Resume;
+use Hushscript\Transcript;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\RequestInterface;
 
 final class PipelineTest extends TestCase
 {
+    /** @var \ArrayObject<int, string> */
+    private static \ArrayObject $handedOut;
+
     /** @var list<string> */
     private array $temp = [];
 
@@ -40,9 +44,8 @@ final class PipelineTest extends TestCase
 
     /**
      * @param  array<string, mixed>  $options
-     * @return array<string, mixed>
      */
-    private static function go(PipelineHarness $harness, array $options = []): array
+    private static function go(PipelineHarness $harness, array $options = []): Transcript
     {
         return $harness->pipeline->transcribe($harness->path(), $options);
     }
@@ -72,9 +75,30 @@ final class PipelineTest extends TestCase
             // The frames of the SDK; the ones below them are the test runner's own arguments.
             $frames = array_filter($link->getTrace(), static fn (array $frame): bool => str_contains($frame['file'] ?? '', dirname(__DIR__, 2).'/src/'));
             $out .= $link->getMessage()."\n".$link->getTraceAsString()."\n".self::reachable($frames, 0, $seen);
+            // What a log handler or a debugger would print: the SDK frames dumped, each argument exported and serialized.
+            $out .= self::quietly(static fn (): string => print_r($frames, true));
+            foreach ($frames as $frame) {
+                foreach ($frame['args'] ?? [] as $argument) {
+                    $out .= self::quietly(static fn (): string => var_export($argument, true));
+                    $out .= self::quietly(static fn (): string => serialize($argument));
+                }
+            }
         }
 
         return $out;
+    }
+
+    /** @param \Closure(): string $render  a dump that may warn about cycles or refuse to serialize a closure or a Secret */
+    private static function quietly(\Closure $render): string
+    {
+        set_error_handler(static fn (): bool => true);
+        try {
+            return $render();
+        } catch (\Throwable) {
+            return '';
+        } finally {
+            restore_error_handler();
+        }
     }
 
     /** @param array<int, true> $seen */
@@ -128,6 +152,11 @@ final class PipelineTest extends TestCase
         return new Response(500);
     }
 
+    private static function firstHandedOut(): ?string
+    {
+        return self::$handedOut->getArrayCopy()[0] ?? null;
+    }
+
     private static function partNumber(string $url): int
     {
         preg_match('~/(\d+)(?:\?|$)~', $url, $match);
@@ -150,7 +179,7 @@ final class PipelineTest extends TestCase
             },
         ]);
 
-        self::assertSame('tr_1', $transcript['id']);
+        self::assertSame('tr_1', $transcript->id);
         self::assertSame(
             ['GET /v1/account', 'POST /v1/uploads', 'POST /v1/uploads/job_1/heartbeat', 'POST /v1/uploads/job_1/complete', 'GET /v1/jobs/job_1', 'GET /v1/transcripts/tr_1'],
             $harness->api->lines(),
@@ -265,6 +294,31 @@ final class PipelineTest extends TestCase
 
         self::assertSame('parts_exhausted', $error->errorCode);
         self::assertCount(8, array_filter($harness->parts->lines(), static fn (string $line): bool => $line === 'PUT r2:1'), '4 attempts, a fresh URL, 4 more attempts');
+        $previous = $error->getPrevious();
+        self::assertInstanceOf(ApiError::class, $previous, 'the last direct failure is the cause');
+        self::assertSame(500, $previous->status);
+        // The fakes keep the requests they saw; those are the test's own record, not the SDK's.
+        $harness->parts->sent = [];
+        $harness->api->requests = [];
+        self::assertStringNotContainsString('X-Amz-Signature', self::surface($error));
+    }
+
+    public function testAPartThatFailsInTransitCarriesTheTransportFailureAsTheCauseWithoutTheUrl(): void
+    {
+        $harness = new PipelineHarness(script: static fn (array $request): array => [
+            self::partNumber($request['url']) === 1 ? PipelineHarness::stored() : PartFailure::of(new \RuntimeException('cURL error 28 for '.$request['url'])),
+            0.0,
+        ]);
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => [['n' => 2, 'url' => PipelineHarness::url(2, '&fresh=1')], ['n' => 3, 'url' => PipelineHarness::url(3, '&fresh=1')]], 'next_part_number' => null]));
+
+        $error = self::failure($harness, UploadError::class);
+
+        self::assertSame('parts_exhausted', $error->errorCode);
+        self::assertInstanceOf(NetworkError::class, $error->getPrevious());
+        $harness->parts->sent = [];
+        $harness->api->requests = [];
+        self::assertStringNotContainsString('X-Amz-Signature', self::surface($error));
+        self::assertStringNotContainsString('r2.example.com', self::surface($error));
     }
 
     /**
@@ -449,7 +503,7 @@ final class PipelineTest extends TestCase
 
         $transcript = self::go($harness, ['concurrency' => 1]);
 
-        self::assertSame('tr_1', $transcript['id']);
+        self::assertSame('tr_1', $transcript->id);
     }
 
     public function testAPartThatCannotBeReadMidUploadIsASourceReadFailureWithTheKeyAndToken(): void
@@ -751,12 +805,12 @@ final class PipelineTest extends TestCase
         if ($scenario === 'job_failed') {
             $harness->api->on('GET', '/v1/jobs/[^/]+', PipelineHarness::json(200, ['id' => 'job_1', 'state' => 'failed', 'error' => 'boom', 'failure_kind' => 'x']));
         }
-        /** @var \ArrayObject<int, string> $handedOut */
-        $handedOut = new \ArrayObject();
+        // Kept in a static, not in the closure: what the caller's own callback captured is the caller's.
+        self::$handedOut = new \ArrayObject();
 
         try {
-            self::go($harness, ['on_resume_token' => static function (string $value) use ($handedOut): void {
-                $handedOut->append($value);
+            self::go($harness, ['on_resume_token' => static function (string $value): void {
+                self::$handedOut->append($value);
             }]);
             self::fail('expected a failure');
         } catch (HushscriptException $error) {
@@ -764,7 +818,7 @@ final class PipelineTest extends TestCase
             $harness->parts->sent = [];
             $harness->api->requests = [];
             $surface = self::surface($error);
-            $token = $handedOut->getArrayCopy()[0] ?? null;
+            $token = self::firstHandedOut();
             self::assertIsString($token, 'the create succeeded, so a resume token was handed out');
             foreach (['X-Amz-Signature', 'SECRET', 'r2.example.com', \Hushscript\Tests\Support\Tokens::TEST, $token] as $needle) {
                 $at = strpos($surface, $needle);

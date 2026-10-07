@@ -148,4 +148,28 @@ final class OptionsTest extends TestCase
 
         self::assertSame([['stage' => 'uploading']], $seen);
     }
+
+    public function testADumpOfTheOptionsShowsNoCallback(): void
+    {
+        $secret = 'captured-resume-token-value';
+        $options = Options::forTranscribe([
+            'on_progress' => static function (array $event) use ($secret): void {
+                $held = [$event, $secret];
+                unset($held);
+            },
+            'on_resume_token' => static function (string $token) use ($secret): void {
+                $held = [$token, $secret];
+                unset($held);
+            },
+        ]);
+
+        $dump = print_r($options, true);
+        ob_start();
+        var_dump($options);
+        $dump .= (string) ob_get_clean();
+
+        self::assertStringNotContainsString('Closure', $dump);
+        self::assertStringNotContainsString($secret, $dump);
+        self::assertStringContainsString('…[callback]', $dump);
+    }
 }

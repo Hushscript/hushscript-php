@@ -164,4 +164,16 @@ final class ApiTest extends TestCase
         self::assertSame(['/v1/account'], $seen);
         self::assertSame(1, $http->count());
     }
+
+    public function testTheInternalCollaboratorIsNotReachableThroughTheLowLevelApi(): void
+    {
+        $methods = array_map(static fn (\ReflectionMethod $method): string => $method->getName(), (new \ReflectionClass(\Hushscript\Api::class))->getMethods(\ReflectionMethod::IS_PUBLIC));
+        sort($methods);
+
+        self::assertSame(['__construct', '__serialize', '__unserialize', 'request'], $methods, 'requestOrNull and the exchange are not part of the public surface');
+        self::assertFalse((new \ReflectionClass(\Hushscript\Api::class))->hasMethod('requestOrNull'));
+        $client = new \Hushscript\Client(\Hushscript\Tests\Support\Tokens::TEST);
+        self::assertSame([], get_object_vars($client->api()), 'no property of the Api reaches the exchange from outside');
+        self::assertStringContainsString('@internal', (string) (new \ReflectionClass(\Hushscript\Http\Exchange::class))->getDocComment());
+    }
 }

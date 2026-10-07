@@ -22,18 +22,18 @@ final class Created
      *
      * @throws \Hushscript\Exception\ApiError bad_response
      */
-    public static function parse(#[\SensitiveParameter] array $body): self
+    public static function parse(#[\SensitiveParameter] array $body, int $status = 200): self
     {
         $jobId = $body['job_id'] ?? null;
         if (! is_string($jobId) || $jobId === '' || $jobId === '.' || $jobId === '..') {
-            throw Shape::bad('a create response without a job id');
+            throw Shape::bad('a create response without a job id', $status);
         }
         $upload = $body['upload'] ?? null;
         if ($upload !== null && (! is_array($upload) || array_is_list($upload))) {
-            throw Shape::bad('an upload plan');
+            throw Shape::bad('an upload plan', $status);
         }
         $state = $body['state'] ?? null;
 
-        return new self($jobId, is_string($state) ? $state : 'uploading', $upload === null ? null : Plan::parse($upload));
+        return new self($jobId, is_string($state) ? $state : 'uploading', $upload === null ? null : Plan::parse($upload, $status));
     }
 }

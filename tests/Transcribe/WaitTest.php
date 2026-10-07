@@ -23,7 +23,7 @@ final class WaitTest extends TestCase
         $harness->api->on('GET', '/v1/jobs/[^/]+', static function ($request, int $count) use ($states): \GuzzleHttp\Psr7\Response {
             $state = $states[min($count, count($states) - 1)];
 
-            return PipelineHarness::json(200, ['id' => 'job_1', 'state' => $state, 'transcript_id' => $state === 'done' ? 'tr_1' : null, 'error' => $state === 'failed' ? 'bad audio' : null, 'failure_kind' => $state === 'failed' ? 'media_unreadable' : null]);
+            return PipelineHarness::json(200, PipelineHarness::jobBody($state, ['id' => 'job_1', 'error' => $state === 'failed' ? 'bad audio' : null, 'failure_kind' => $state === 'failed' ? 'media_unreadable' : null]));
         });
 
         return $harness;
@@ -38,7 +38,7 @@ final class WaitTest extends TestCase
             $progress[] = $p;
         }]);
 
-        self::assertSame('done', $job['state']);
+        self::assertSame('done', $job->state);
         self::assertSame([5.0, 7.5, 11.25, 15.0, 15.0, 15.0], $harness->clock->sleeps);
         self::assertSame(['queued', 'processing', 'processing', 'processing', 'processing', 'processing'], array_column($progress, 'state'));
         self::assertSame('processing', $progress[0]['stage']);
@@ -64,9 +64,10 @@ final class WaitTest extends TestCase
 
         $job = $harness->jobsWait('job_1', []);
 
-        self::assertSame('failed', $job['state']);
+        self::assertSame('failed', $job->state);
+        self::assertSame('bad audio', $job->error);
         try {
-            Wait::transcriptId($job);
+            Wait::transcriptId(['id' => 'job_1', 'state' => 'failed', 'error' => 'bad audio', 'failure_kind' => 'media_unreadable']);
             self::fail('expected a JobFailedError');
         } catch (JobFailedError $error) {
             self::assertSame('job_1', $error->jobId);
@@ -125,7 +126,7 @@ final class WaitTest extends TestCase
     public function testAnIdIsPercentEncodedInThePath(): void
     {
         $harness = new PipelineHarness();
-        $harness->api->on('GET', '/v1/jobs/.+', PipelineHarness::json(200, ['state' => 'done', 'transcript_id' => 'tr_1']));
+        $harness->api->on('GET', '/v1/jobs/.+', PipelineHarness::json(200, PipelineHarness::jobBody()));
 
         $harness->jobsWait('a b?c', []);
 

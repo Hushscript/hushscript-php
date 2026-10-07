@@ -63,7 +63,7 @@ final class Preflight
      *
      * @param  array<mixed>  $account
      */
-    public static function account(array $account, int $durationSeconds, Options $options): void
+    public static function account(#[\SensitiveParameter] array $account, int $durationSeconds, Options $options): void
     {
         $needed = self::estimate($durationSeconds, $options->medical, $options->translateTo);
         $balance = self::whole($account['balance_seconds'] ?? null);

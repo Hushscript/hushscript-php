@@ -81,7 +81,7 @@ final class Resume
         return new ResumeMismatchError('The upload was not finished and no file was given.', 'resume_file_required');
     }
 
-    public static function jobMissing(?\Throwable $previous = null): ResumeMismatchError
+    public static function jobMissing(#[\SensitiveParameter] ?\Throwable $previous = null): ResumeMismatchError
     {
         return new ResumeMismatchError('The job behind this resume token no longer exists.', 'resume_job_missing', previous: $previous);
     }
