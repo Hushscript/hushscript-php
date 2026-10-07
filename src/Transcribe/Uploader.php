@@ -8,13 +8,13 @@ use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Uri;
 use GuzzleHttp\Psr7\Utils as Psr7;
-use Hushscript\Api;
 use Hushscript\Clock;
 use Hushscript\Credentials;
 use Hushscript\Exception\ErrorMapper;
 use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\NetworkError;
 use Hushscript\Exception\UploadError;
+use Hushscript\Http\Exchange;
 use Hushscript\Http\Outcome;
 use Hushscript\Http\RetryClass;
 use Hushscript\Http\RetryPolicy;
@@ -54,7 +54,7 @@ final class Uploader
      */
     public function __construct(
         private readonly PartTransport $transport,
-        private readonly Api $api,
+        private readonly Exchange $api,
         private readonly Credentials $credentials,
         private readonly Clock $clock,
         private readonly Log $log,

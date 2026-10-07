@@ -6,6 +6,7 @@ namespace Hushscript\Tests\Support;
 
 use Hushscript\Api;
 use Hushscript\Credentials;
+use Hushscript\Http\Exchange;
 use Hushscript\Http\RetryMiddleware;
 use Hushscript\Log;
 use Psr\Http\Client\ClientInterface;
@@ -20,6 +21,8 @@ final class Rig
     public readonly RetryMiddleware $transport;
 
     public readonly Api $api;
+
+    public readonly Exchange $exchange;
 
     /** @var list<string> */
     public array $logLines = [];
@@ -44,6 +47,7 @@ final class Rig
             $maxRetries,
             jitter: static fn (float $ceiling): float => $ceiling,
         );
-        $this->api = new Api($this->transport, $this->credentials, self::BASE);
+        $this->exchange = new Exchange($this->transport, $this->credentials, self::BASE);
+        $this->api = new Api($this->exchange);
     }
 }

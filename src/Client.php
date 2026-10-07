@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hushscript;
 
 use GuzzleHttp\Client as GuzzleClient;
+use Hushscript\Http\Exchange;
 use Hushscript\Http\RetryMiddleware;
 use Hushscript\Http\RetryPolicy;
 use Hushscript\Http\WaitTicker;
@@ -50,10 +51,11 @@ final class Client
             $this->config->maxRetries,
             ticker: $ticker,
         );
-        $this->api = new Api($transport, $this->config->credentials, $this->config->baseUrl);
+        $exchange = new Exchange($transport, $this->config->credentials, $this->config->baseUrl);
+        $this->api = new Api($exchange);
         $config = $this->config;
         $this->pipeline = new Pipeline(
-            $this->api,
+            $exchange,
             $config->credentials,
             $config->baseUrl,
             $config->clock,

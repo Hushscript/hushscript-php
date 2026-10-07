@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Hushscript\Transcribe;
 
-use Hushscript\Api;
 use Hushscript\Clock;
 use Hushscript\Credentials;
 use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\NotFoundError;
+use Hushscript\Http\Exchange;
 use Hushscript\Http\WaitTicker;
 use Hushscript\Log;
 use Hushscript\Secret;
@@ -26,7 +26,7 @@ final class Pipeline
      * @param  \Closure(float): float  $jitter  maps a ceiling to a delay in [0, ceiling]
      */
     public function __construct(
-        private readonly Api $api,
+        private readonly Exchange $api,
         private readonly Credentials $credentials,
         private readonly string $baseUrl,
         private readonly Clock $clock,

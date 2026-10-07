@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Hushscript\Transcribe;
 
-use Hushscript\Api;
 use Hushscript\Clock;
 use Hushscript\Exception\JobFailedError;
 use Hushscript\Exception\UploadError;
 use Hushscript\Exception\WaitTimeoutError;
+use Hushscript\Http\Exchange;
 use Hushscript\Secret;
 
 /**
@@ -29,7 +29,7 @@ final class Wait
     }
 
     /** @return array<string, mixed> */
-    public static function job(Api $api, string $jobId): array
+    public static function job(Exchange $api, string $jobId): array
     {
         $body = Shape::record($api->request('GET', '/v1/jobs/'.Shape::segment($jobId, 'job id')), 'a job');
         if (! is_string($body['state'] ?? null)) {
@@ -48,7 +48,7 @@ final class Wait
      * @param  (\Closure(array<string, mixed>): void)|null  $onProgress
      * @return array<string, mixed>
      */
-    public static function until(Api $api, Clock $clock, string $jobId, float $waitTimeout, ?\Closure $onProgress, ?Secret $token, #[\SensitiveParameter] ?array $first = null): array
+    public static function until(Exchange $api, Clock $clock, string $jobId, float $waitTimeout, ?\Closure $onProgress, ?Secret $token, #[\SensitiveParameter] ?array $first = null): array
     {
         $started = $clock->now();
         $delay = self::FIRST_DELAY;
@@ -106,7 +106,7 @@ final class Wait
     }
 
     /** @return array<string, mixed> */
-    public static function transcript(Api $api, string $transcriptId): array
+    public static function transcript(Exchange $api, string $transcriptId): array
     {
         return Shape::record($api->request('GET', '/v1/transcripts/'.Shape::segment($transcriptId, 'transcript id')), 'a transcript');
     }

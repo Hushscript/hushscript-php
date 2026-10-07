@@ -19,8 +19,10 @@ final class SensitiveParametersTest extends TestCase
         yield 'Api::request path' => [\Hushscript\Api::class, 'request', 'path'];
         yield 'Api::request query' => [\Hushscript\Api::class, 'request', 'query'];
         yield 'Api::request body' => [\Hushscript\Api::class, 'request', 'body'];
-        yield 'Api::checkPath path' => [\Hushscript\Api::class, 'checkPath', 'path'];
-        yield 'Api::queryString query' => [\Hushscript\Api::class, 'queryString', 'query'];
+        yield 'Exchange::request path' => [\Hushscript\Http\Exchange::class, 'request', 'path'];
+        yield 'Exchange::request body' => [\Hushscript\Http\Exchange::class, 'request', 'body'];
+        yield 'Exchange::checkPath path' => [\Hushscript\Http\Exchange::class, 'checkPath', 'path'];
+        yield 'Exchange::queryString query' => [\Hushscript\Http\Exchange::class, 'queryString', 'query'];
         yield 'RetryMiddleware::transmit outgoing' => [\Hushscript\Http\RetryMiddleware::class, 'transmit', 'outgoing'];
         // Methods that take an API body, a response or a failure that may quote a signed URL: a body is data of the account.
         yield 'Shape::record value' => [\Hushscript\Transcribe\Shape::class, 'record', 'value'];
@@ -62,7 +64,7 @@ final class SensitiveParametersTest extends TestCase
 
     /** Parameters whose names match but hold nothing secret, with the reason. */
     private const NOT_SECRET = [
-        'Hushscript\\Api::__construct:$baseUrl' => 'the configured API origin',
+        'Hushscript\\Http\\Exchange::__construct:$baseUrl' => 'the configured API origin',
         'Hushscript\\Config::__construct:$baseUrl' => 'the configured API origin',
         'Hushscript\\Http\\RetryMiddleware::__construct:$baseUrl' => 'the configured API origin',
         'Hushscript\\Transcribe\\Pipeline::__construct:$baseUrl' => 'the configured API origin',

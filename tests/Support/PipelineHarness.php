@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Hushscript\Tests\Support;
 
 use GuzzleHttp\Psr7\Response;
-use Hushscript\Api;
 use Hushscript\Credentials;
+use Hushscript\Http\Exchange;
 use Hushscript\Http\RetryMiddleware;
 use Hushscript\Http\WaitTicker;
 use Hushscript\Log;
@@ -68,7 +68,7 @@ final class PipelineHarness
             jitter: static fn (float $ceiling): float => $ceiling,
             ticker: $ticker,
         );
-        $api = new Api($retry, $this->credentials, self::BASE);
+        $api = new Exchange($retry, $this->credentials, self::BASE);
         $this->pipeline = new Pipeline(
             $api,
             $this->credentials,
