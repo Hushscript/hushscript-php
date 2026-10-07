@@ -257,7 +257,7 @@ final class BillingTest extends TestCase
         yield 'space' => ['a b'];
         yield 'dot' => ['a.b'];
         yield 'slash' => ['a/b'];
-        yield 'non ascii' => ["caf\u{e9}"];
+        yield 'non ascii' => ["r\u{e9}sum\u{e9}"];
         yield 'newline at the end' => ["abc\n"];
         yield '129 characters' => [str_repeat('a', 129)];
     }

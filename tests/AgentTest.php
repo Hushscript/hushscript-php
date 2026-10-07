@@ -692,7 +692,7 @@ final class AgentTest extends TestCase
         yield 'a space' => ['hsr1:eu:pat.aa bb'];
         yield 'a control character' => ["hsr1:eu:pat.aa\x07bb"];
         yield 'a newline' => ["hsr1:eu:pat.aa\nbb"];
-        yield 'non ascii' => ["hsr1:eu:pat.caf\u{e9}"];
+        yield 'non ascii' => ["hsr1:eu:pat.r\u{e9}sum\u{e9}"];
     }
 
     #[DataProvider('tokensTheClientRefuses')]
