@@ -95,7 +95,7 @@ final class UnexpectedFailureTest extends TestCase
         }
     }
 
-    public function testAHugeRetryAfterHeaderIsAbsentNotAnError(): void
+    public function testAHugeRetryAfterHeaderIsCappedNotAnError(): void
     {
         $error = ErrorMapper::fromResponse(
             FakeHttp::json(429, ['error' => 'rate_limited', 'code' => 5000], ['Retry-After' => str_repeat('9', 400)]),
@@ -104,7 +104,7 @@ final class UnexpectedFailureTest extends TestCase
             '/v1/account',
         );
 
-        self::assertNull($error->retryAfter);
+        self::assertSame(9007199254740991, $error->retryAfter);
     }
 
     public function testNumbersBeyondAnyIntegerNeverBreakAHint(): void
