@@ -289,6 +289,31 @@ final class PipelineTest extends TestCase
 
         self::assertSame('parts_exhausted', $error->errorCode);
         self::assertCount(8, array_filter($harness->parts->lines(), static fn (string $line): bool => $line === 'PUT r2:1'), '4 attempts, a fresh URL, 4 more attempts');
+        $previous = $error->getPrevious();
+        self::assertInstanceOf(ApiError::class, $previous, 'the last direct failure is the cause');
+        self::assertSame(500, $previous->status);
+        // The fakes keep the requests they saw; those are the test's own record, not the SDK's.
+        $harness->parts->sent = [];
+        $harness->api->requests = [];
+        self::assertStringNotContainsString('X-Amz-Signature', self::surface($error));
+    }
+
+    public function testAPartThatFailsInTransitCarriesTheTransportFailureAsTheCauseWithoutTheUrl(): void
+    {
+        $harness = new PipelineHarness(script: static fn (array $request): array => [
+            self::partNumber($request['url']) === 1 ? PipelineHarness::stored() : PartFailure::of(new \RuntimeException('cURL error 28 for '.$request['url'])),
+            0.0,
+        ]);
+        $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => [['n' => 2, 'url' => PipelineHarness::url(2, '&fresh=1')], ['n' => 3, 'url' => PipelineHarness::url(3, '&fresh=1')]], 'next_part_number' => null]));
+
+        $error = self::failure($harness, UploadError::class);
+
+        self::assertSame('parts_exhausted', $error->errorCode);
+        self::assertInstanceOf(NetworkError::class, $error->getPrevious());
+        $harness->parts->sent = [];
+        $harness->api->requests = [];
+        self::assertStringNotContainsString('X-Amz-Signature', self::surface($error));
+        self::assertStringNotContainsString('r2.example.com', self::surface($error));
     }
 
     /**

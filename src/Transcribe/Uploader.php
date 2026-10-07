@@ -10,6 +10,7 @@ use GuzzleHttp\Psr7\Uri;
 use GuzzleHttp\Psr7\Utils as Psr7;
 use Hushscript\Clock;
 use Hushscript\Credentials;
+use Hushscript\Exception\ApiError;
 use Hushscript\Exception\ErrorMapper;
 use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\NetworkError;
@@ -20,6 +21,7 @@ use Hushscript\Http\RetryClass;
 use Hushscript\Http\RetryPolicy;
 use Hushscript\IdleClock;
 use Hushscript\Log;
+use Hushscript\Redact;
 use Hushscript\Secret;
 use Hushscript\Version;
 use Psr\Http\Message\ResponseInterface;
@@ -291,7 +293,7 @@ final class Uploader
         if ($run->proxied) {
             throw $this->proxiedFailure($run, $answer);
         }
-        $this->directGaveUp($run, $status);
+        $this->directGaveUp($run, $status, $answer);
     }
 
     private function acknowledged(PartRun $run, #[\SensitiveParameter] ResponseInterface $response): void
@@ -317,11 +319,11 @@ final class Uploader
         $run->done = true;
     }
 
-    private function directGaveUp(PartRun $run, ?int $status): void
+    private function directGaveUp(PartRun $run, ?int $status, #[\SensitiveParameter] ResponseInterface|PartFailure|null $answer): void
     {
         $action = $this->state->decide($run, $status);
         if ($action === UploadState::EXHAUSTED) {
-            throw new UploadError('Part '.$run->n.' could not be uploaded after its retries and a fresh URL.', 'parts_exhausted');
+            throw new UploadError('Part '.$run->n.' could not be uploaded after its retries and a fresh URL.', 'parts_exhausted', previous: $this->directFailure($run, $answer));
         }
         if ($action === UploadState::FALLBACK) {
             $this->toProxied($run);
@@ -335,6 +337,17 @@ final class Uploader
             }
         }
         $this->start($run);
+    }
+
+    /** What the last direct PUT of the part came to, as a cause that holds no URL or signature. */
+    private function directFailure(PartRun $run, #[\SensitiveParameter] ResponseInterface|PartFailure|null $answer): \Throwable
+    {
+        $where = 'The direct upload of part '.$run->n;
+        if ($answer instanceof ResponseInterface) {
+            return new ApiError($where.' was answered with '.$answer->getStatusCode().'.', 'http_'.$answer->getStatusCode(), status: $answer->getStatusCode());
+        }
+
+        return new NetworkError($where.' failed: '.Redact::text($answer instanceof PartFailure ? $answer->getMessage() : 'no answer').'.');
     }
 
     /**
