@@ -135,7 +135,7 @@ final class Pipeline
      * @param  \Closure(Tracker): T  $run
      * @return T
      */
-    private function annotated(?string $key, ?Secret $token, Options $options, \Closure $run): mixed
+    private function annotated(#[\SensitiveParameter] ?string $key, ?Secret $token, Options $options, \Closure $run): mixed
     {
         $tracker = new Tracker($key ?? '', $token);
         try {

@@ -68,11 +68,11 @@ final class ErrorMapper
     public static function operationKey(string $method, #[\SensitiveParameter] string $path): ?string
     {
         self::$patterns ??= array_map(
-            static function (string $key): array {
-                $template = explode(' ', $key, 2)[1];
+            static function (string $operation): array {
+                $template = explode(' ', $operation, 2)[1];
                 $regex = preg_replace('/\\\\\{[^}\/]+\\\\\}/', '[^/]+', preg_quote($template, '~')) ?? $template;
 
-                return ['~^'.$regex.'$~D', $key];
+                return ['~^'.$regex.'$~D', $operation];
             },
             array_keys(Scopes::OPERATIONS),
         );
@@ -173,7 +173,7 @@ final class ErrorMapper
      */
     private static function extraDetails(#[\SensitiveParameter] array $body): array
     {
-        $details = array_filter($body, static fn (mixed $key): bool => ! in_array($key, ['error', 'code', 'details'], true), ARRAY_FILTER_USE_KEY);
+        $details = array_filter($body, static fn (mixed $name): bool => ! in_array($name, ['error', 'code', 'details'], true), ARRAY_FILTER_USE_KEY);
         $nested = $body['details'] ?? null;
         if (is_array($nested)) {
             foreach ($nested as $key => $value) {

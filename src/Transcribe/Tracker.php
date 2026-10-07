@@ -10,7 +10,7 @@ use Hushscript\Secret;
 final class Tracker
 {
     public function __construct(
-        public readonly string $key,
+        #[\SensitiveParameter] public readonly string $key,
         public ?Secret $token = null,
     ) {
     }

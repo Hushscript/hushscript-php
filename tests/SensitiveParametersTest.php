@@ -83,6 +83,10 @@ final class SensitiveParametersTest extends TestCase
         'Hushscript\\Transcribe\\Probe::container:$path' => 'a file path of the caller',
         'Hushscript\\Transcribe\\Probe::scanMp3:$path' => 'a file path of the caller',
         'Hushscript\\Transcribe\\Probe::opusSeconds:$path' => 'a file path of the caller',
+        'Hushscript\\Resource\\Agent::text:$key' => 'the name of a request field',
+        'Hushscript\\Resource\\Billing::walk:$key' => 'the name of a response field',
+        'Hushscript\\Hint::camel:$key' => 'the name of a detail field',
+        'Hushscript\\Exception\\ErrorMapper::snake:$key' => 'the name of a detail field',
     ];
 
     /** @return iterable<string, array{string, string, string}> */
@@ -150,13 +154,14 @@ final class SensitiveParametersTest extends TestCase
     #[DataProvider('everyParameter')]
     public function testEveryParameterNamedLikeASecretIsMarkedSensitive(string $class, string $method, string $parameter): void
     {
-        if (preg_match('/token|secret|url|authorization|pat|claim/i', $parameter) !== 1 && preg_match(self::BODY_NAMES, $parameter) !== 1) {
+        if (preg_match('/token|secret|url|authorization|pat|claim|idempotencykey|^key$/i', $parameter) !== 1 && preg_match(self::BODY_NAMES, $parameter) !== 1) {
             $this->addToAssertionCount(1);
 
             return;
         }
         $key = $class.'::'.$method.':$'.$parameter;
-        if (isset(self::NOT_SECRET[$key])) {
+        // Body's accessors take the name of a field, never an idempotency key.
+        if (isset(self::NOT_SECRET[$key]) || ($class === \Hushscript\Http\Body::class && $parameter === 'key')) {
             $this->addToAssertionCount(1);
 
             return;
@@ -224,7 +229,7 @@ final class SensitiveParametersTest extends TestCase
                     continue;
                 }
                 $name = (string) end($names[1]);
-                $named = preg_match('/token|secret|url|authorization|pat|claim/i', $name) === 1 || preg_match(self::BODY_NAMES, $name) === 1;
+                $named = preg_match('/token|secret|url|authorization|pat|claim|idempotencykey|^key$/i', $name) === 1 || preg_match(self::BODY_NAMES, $name) === 1;
                 if ($named && ! str_contains($declaration, '#[\\SensitiveParameter]')) {
                     $found[] = 'line '.$line.' $'.$name;
                 }

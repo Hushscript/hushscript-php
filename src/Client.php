@@ -152,7 +152,7 @@ final class Client
      *
      * @throws \Hushscript\Exception\HushscriptException
      */
-    public function buy(string $pack, bool $acknowledgeNoRefund = false, ?string $idempotencyKey = null): Purchase
+    public function buy(string $pack, bool $acknowledgeNoRefund = false, #[\SensitiveParameter] ?string $idempotencyKey = null): Purchase
     {
         return $this->billing->buy($pack, $acknowledgeNoRefund, $idempotencyKey);
     }

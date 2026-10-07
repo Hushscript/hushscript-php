@@ -66,7 +66,7 @@ final class Preflight
     /**
      * @return array<string, mixed>
      */
-    public static function createBody(int $size, int $durationSeconds, Options $options, string $key): array
+    public static function createBody(int $size, int $durationSeconds, Options $options, #[\SensitiveParameter] string $key): array
     {
         $body = ['size_bytes' => $size, 'duration_seconds' => $durationSeconds, 'idempotency_key' => $key];
         if ($options->title !== null) {
