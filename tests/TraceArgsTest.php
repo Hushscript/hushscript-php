@@ -178,8 +178,11 @@ final class TraceArgsTest extends TestCase
     {
         $harness = new PipelineHarness();
         $body = $harness->createBody();
-        self::assertIsArray($body['upload']);
-        $body['upload']['part_urls'][] = ['n' => 'two', 'url' => PipelineHarness::url(2)];
+        $upload = $body['upload'];
+        self::assertIsArray($upload);
+        self::assertIsArray($upload['part_urls']);
+        $upload['part_urls'][] = ['n' => 'two', 'url' => PipelineHarness::url(2)];
+        $body['upload'] = $upload;
         $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, $body));
 
         try {
@@ -193,7 +196,7 @@ final class TraceArgsTest extends TestCase
 
     public function testAFailedPartPutLeavesNoSecretInTraceArguments(): void
     {
-        $storage = new class implements ClientInterface {
+        $storage = new class () implements ClientInterface {
             #[\Override]
             public function sendRequest(RequestInterface $request): ResponseInterface
             {

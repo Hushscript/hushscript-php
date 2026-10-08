@@ -171,7 +171,7 @@ final class RetryMiddleware implements ClientInterface
         $this->ticker === null ? $this->clock->sleep($seconds) : $this->ticker->sleep($this->clock, $seconds);
     }
 
-    /** @param  self::*  $stage  how far the attempt got, kept up to date for the caller */
+    /** @param  int  $stage  how far the attempt got (PREPARING to ANSWERED), kept up to date for the caller */
     private function attemptOnce(#[\SensitiveParameter] RequestInterface $request, bool $onBase, RetryClass $class, int &$stage): ResponseInterface
     {
         $outgoing = $request->withHeader('User-Agent', 'hushscript-php/'.Version::SDK.' php/'.PHP_VERSION);
@@ -275,7 +275,7 @@ final class RetryMiddleware implements ClientInterface
      * `unexpected_error` saying so. Once it may have gone out, a claim, rotation or signup has an unknown outcome
      * whose hint says what to check, and any other call is `unexpected_error` saying what is known.
      *
-     * @param  self::*  $stage
+     * @param  int  $stage  PREPARING to ANSWERED
      */
     private function notTransport(#[\SensitiveParameter] \Throwable $failure, int $stage, RetryClass $class, ?string $route, string $where, string $summary): HushscriptException
     {

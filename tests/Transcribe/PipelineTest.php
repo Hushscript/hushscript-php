@@ -881,7 +881,7 @@ final class PipelineTest extends TestCase
     #[DataProvider('partWays')]
     public function testANonTransportErrorFromTheCallersClientOnAPartPutIsUnexpectedAndNotRetried(bool $proxied): void
     {
-        $client = new class implements \Psr\Http\Client\ClientInterface {
+        $client = new class () implements \Psr\Http\Client\ClientInterface {
             /** @var list<string> */
             public array $paths = [];
 

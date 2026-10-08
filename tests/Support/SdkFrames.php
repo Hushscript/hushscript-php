@@ -37,10 +37,11 @@ final class SdkFrames
             }
             (new \ReflectionProperty($link instanceof \Exception ? \Exception::class : \Error::class, 'trace'))->setValue($link, $kept);
         }
-        $sdk = array_filter(
-            $error->getTrace(),
-            static fn (array $frame): bool => str_starts_with($frame['class'] ?? '', 'Hushscript\\') && ! str_starts_with($frame['class'] ?? '', 'Hushscript\\Tests\\'),
-        );
+        $sdk = array_filter($error->getTrace(), static function (array $frame): bool {
+            $class = $frame['class'] ?? '';
+
+            return str_starts_with($class, 'Hushscript\\') && ! str_starts_with($class, 'Hushscript\\Tests\\');
+        });
         Assert::assertNotSame([], $sdk, 'the trace keeps the SDK frames to check');
 
         return $error;
