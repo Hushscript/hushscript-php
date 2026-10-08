@@ -22,6 +22,12 @@ final class MoneyTest extends TestCase
         yield 'grouped' => [150_000, 'USD', '$1,500.00'];
         yield 'jpy has no digits' => [500, 'JPY', '¥500'];
         yield 'kwd has three' => [1500, 'KWD', 'KWD'.self::NBSP.'1.500'];
+        yield 'mxn' => [123456, 'MXN', 'MXN'.self::NBSP.'1,234.56'];
+        yield 'inr' => [123456, 'INR', 'INR'.self::NBSP.'1,234.56'];
+        yield 'brl' => [123456, 'BRL', 'BRL'.self::NBSP.'1,234.56'];
+        yield 'cad' => [123456, 'CAD', 'CAD'.self::NBSP.'1,234.56'];
+        yield 'aud' => [123456, 'AUD', 'AUD'.self::NBSP.'1,234.56'];
+        yield 'chf' => [123456, 'CHF', 'CHF'.self::NBSP.'1,234.56'];
         yield 'eur' => [3499, 'EUR', '€34.99'];
         yield 'gbp' => [1250, 'GBP', '£12.50'];
         // Stripe counts two digits where ICU counts none, so ICU would print a price 100 times too large.

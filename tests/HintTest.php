@@ -56,6 +56,16 @@ final class HintTest extends TestCase
         );
     }
 
+    public function testNegativeRetryAfterSecondsAreAbsent(): void
+    {
+        foreach ([-1, -0.5] as $seconds) {
+            self::assertSame('Too many requests.', Hint::render('rate_limited', ['retry_after_seconds' => $seconds]));
+            self::assertSame('This account has used its 3 purchase attempts for the last 24 hours.', Hint::render('agent_purchase_capped', ['retry_after_seconds' => $seconds]));
+        }
+        self::assertSame('Too many requests.', Hint::render('rate_limited', [], -1));
+        self::assertSame('Too many requests. The SDK already waited and retried; slow down or try again in 0 s.', Hint::render('rate_limited', ['retry_after_seconds' => 0]));
+    }
+
     public function testTheScopeComesFromTheOperationMap(): void
     {
         $hint = Hint::render('pat_scope_missing', [], null, 'billing:write');

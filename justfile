@@ -4,8 +4,8 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 export HOST_UID := `id -u`
 export HOST_GID := `id -g`
-# Until every op of the runner contract is mapped, an unmapped scenario is skipped, not failed.
-export CONFORMANCE_STRICT := env("CONFORMANCE_STRICT", "0")
+# Every scenario must run; an unmapped operation fails conformance.
+export CONFORMANCE_STRICT := env("CONFORMANCE_STRICT", "1")
 # The conformance suite is read at the ref in conformance-ref, the one place it is pinned.
 conformance_ref := `tr -d '[:space:]' < conformance-ref`
 export CONFORMANCE_CONTEXT := env("CONFORMANCE_CONTEXT", "https://github.com/Hushscript/hushscript-sdk-conformance.git#" + conformance_ref)
@@ -31,7 +31,7 @@ test version=floor:
     docker compose build mock test
     docker compose run --rm test
 
-# Infection on the HTTP core (nightly)
+# Infection on the HTTP core and transcribe pipeline (nightly)
 mutation version=floor:
     #!/usr/bin/env bash
     set -euo pipefail

@@ -114,4 +114,4 @@ function agentSignupExample(array $arguments): int
     return 0;
 }
 
-exit(agentSignupExample(array_slice($argv, 1)));
+exit(agentSignupExample(array_slice($argv ?? [], 1)));

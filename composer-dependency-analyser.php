@@ -23,6 +23,8 @@ return (new Configuration())
         'Hushscript\\Scripts\\emitScopes',
         'Hushscript\\Scripts\\generate',
     ])
+    // The buy example is a script that its test loads with require; its functions are not autoloadable.
+    ->ignoreUnknownFunctions(['mayHaveCharged'])
     // The coverage gate in scripts/ parses clover.xml; it is a dev script, not part of the package.
     ->ignoreErrorsOnExtensionAndPath('ext-simplexml', __DIR__.'/scripts', [ErrorType::SHADOW_DEPENDENCY])
     // The sensitive-parameter guard tokenizes the sources; only the test suite needs the extension.

@@ -116,6 +116,12 @@ final class UnexpectedFailureTest extends TestCase
             self::assertIsString($text);
         }
 
+        self::assertSame('Too many requests.', Hint::render('rate_limited', ['retry_after_seconds' => PHP_INT_MIN]));
+        self::assertSame(
+            'Too many requests. The SDK already waited and retried; slow down or try again in 9223372036854775807 s.',
+            Hint::render('rate_limited', ['retry_after_seconds' => PHP_INT_MAX]),
+        );
+
         $error = ErrorMapper::fromResponse(
             FakeHttp::json(402, '{"error":"insufficient_balance","code":4002,"needed_seconds":1e400,"retry_after_seconds":1e400}'),
             new Credentials(Tokens::TEST),
@@ -123,5 +129,55 @@ final class UnexpectedFailureTest extends TestCase
             '/v1/uploads',
         );
         self::assertNull($error->retryAfter);
+    }
+
+    /** @return iterable<string, array{mixed}> */
+    public static function absentHintNumbers(): iterable
+    {
+        yield 'positive infinity' => [INF];
+        yield 'negative infinity' => [-INF];
+        yield 'NaN' => [NAN];
+        yield 'beyond integer range' => [9.9e300];
+        yield 'numeric string' => [str_repeat('9', 401)];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('absentHintNumbers')]
+    public function testUnusableHintNumbersDropTheDependentSentence(mixed $number): void
+    {
+        self::assertSame("Buy a pack with the SDK's buy method or in the app.", Hint::render('insufficient_balance', ['needed_seconds' => $number, 'balance_seconds' => $number]));
+        self::assertSame('Too many requests.', Hint::render('rate_limited', ['retry_after_seconds' => $number]));
+    }
+
+    /** @return iterable<string, array{string, string, list<string>}> */
+    public static function throwingCallbacks(): iterable
+    {
+        foreach (['domain', 'sdk'] as $kind) {
+            yield 'progress '.$kind => ['on_progress', $kind, ['GET /v1/account']];
+            yield 'resume token '.$kind => ['on_resume_token', $kind, ['GET /v1/account', 'POST /v1/uploads']];
+        }
+    }
+
+    /** @param list<string> $requests */
+    #[\PHPUnit\Framework\Attributes\DataProvider('throwingCallbacks')]
+    public function testCallbackErrorsReachTheCallerUnchangedAndStopRequests(string $callback, string $kind, array $requests): void
+    {
+        $harness = new PipelineHarness();
+        $mine = $kind === 'sdk' ? new ConflictError('mine', 'wrong_state') : new \DomainException('caller error');
+        try {
+            $harness->pipeline->transcribe($harness->path(), [$callback => static function () use ($mine): never {
+                throw $mine;
+            }]);
+            self::fail('expected callback exception');
+        } catch (\Throwable $error) {
+            self::assertSame($mine, $error);
+            if ($mine instanceof HushscriptException) {
+                self::assertNull($mine->idempotencyKey);
+                self::assertNull($mine->resumeToken);
+                self::assertNull($mine->status);
+                self::assertSame('wrong_state', $mine->errorCode);
+            }
+        }
+        self::assertSame($requests, $harness->api->lines());
+        self::assertSame([], $harness->parts->sent);
     }
 }

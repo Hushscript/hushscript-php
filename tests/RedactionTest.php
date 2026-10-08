@@ -192,6 +192,14 @@ final class RedactionTest extends TestCase
         self::assertStringContainsString(Redact::MARKER, $scrubbed);
     }
 
+    public function testSecretTailRedactionStartsAtSixteenCharacters(): void
+    {
+        foreach ([15 => 'abcdefghijklmno', 16 => 'abcdefghijklmnop'] as $length => $tail) {
+            $credentials = new Credentials('hsr1:eu:pat.prefix.'.$tail);
+            self::assertSame($length < 16 ? 'echo '.$tail : 'echo '.Redact::MARKER, $credentials->scrub('echo '.$tail));
+        }
+    }
+
     public function testTheSecretSegmentOfAnEarlierTokenIsRedactedToo(): void
     {
         $credentials = new Credentials(Tokens::TEST);

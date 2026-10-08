@@ -19,7 +19,7 @@ use Psr\Http\Message\ResponseInterface;
  */
 final class FakePartTransport implements PartTransport
 {
-    /** @var list<array{method: string, url: string, authorization: string, length: int, headers: array<mixed>}> */
+    /** @var list<array{method: string, url: string, authorization: string, length: int, timeout: float, headers: array<mixed>}> */
     public array $sent = [];
 
     /** @var array<int, array{Promise, float, ResponseInterface|PartFailure}> */
@@ -30,7 +30,7 @@ final class FakePartTransport implements PartTransport
     public int $maxPending = 0;
 
     /**
-     * @param  \Closure(array{method: string, url: string, authorization: string, length: int, headers: array<mixed>}, int): array{ResponseInterface|PartFailure, float}  $script
+     * @param  \Closure(array{method: string, url: string, authorization: string, length: int, timeout: float, headers: array<mixed>}, int): array{ResponseInterface|PartFailure, float}  $script
      */
     public function __construct(private readonly Clock $clock, private readonly \Closure $script)
     {
@@ -44,6 +44,7 @@ final class FakePartTransport implements PartTransport
             'url' => (string) $request->getUri(),
             'authorization' => $request->getHeaderLine('Authorization'),
             'length' => (int) $request->getBody()->getSize(),
+            'timeout' => $timeout,
             'headers' => array_map(array_values(...), $request->getHeaders()),
         ];
         $index = count($this->sent);

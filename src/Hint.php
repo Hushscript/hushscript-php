@@ -133,7 +133,7 @@ final class Hint
     {
         $seconds = $retryAfter ?? self::number($fromDetails);
 
-        if ($seconds === null) {
+        if ($seconds === null || $seconds < 0) {
             return null;
         }
 

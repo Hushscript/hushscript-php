@@ -31,7 +31,7 @@ function exportSrtExample(array $arguments): int
 }
 
 try {
-    exit(exportSrtExample(array_slice($argv, 1)));
+    exit(exportSrtExample(array_slice($argv ?? [], 1)));
 } catch (HushscriptException $error) {
     fwrite(STDERR, "{$error->errorCode}: ".($error->hint ?? $error->getMessage())."\n");
     exit(1);

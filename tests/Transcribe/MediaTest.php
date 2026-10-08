@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hushscript\Tests\Transcribe;
 
 use Hushscript\Exception\FileLimitError;
+use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\PreflightError;
 use Hushscript\Exception\UnsupportedMediaError;
 use Hushscript\Tests\Support\Conformance;
@@ -120,7 +121,7 @@ final class MediaTest extends TestCase
     {
         $seconds = Probe::seconds(Source::open(self::path('truncated.flac')));
 
-        self::assertGreaterThan(0.0, $seconds);
+        self::assertEqualsWithDelta(20.0, $seconds, 1.0);
     }
 
     public function testATenSecondFileIsRefusedAsTooShort(): void
@@ -250,9 +251,14 @@ final class MediaTest extends TestCase
         $source = Source::open($path);
         unlink($path);
 
-        $this->expectException(\Hushscript\Exception\UploadError::class);
-
-        $source->readRange(0, 3);
+        try {
+            $source->readRange(0, 3);
+            self::fail('expected source_read_failed');
+        } catch (HushscriptException $error) {
+            self::assertSame(\Hushscript\Exception\UploadError::class, $error::class);
+            self::assertSame('source_read_failed', $error->errorCode);
+            self::assertNull($error->status);
+        }
     }
 
     public function testSizeOfOnlyAnswersForARegularFile(): void

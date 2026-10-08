@@ -640,7 +640,10 @@ final class PipelineTest extends TestCase
 
         $error = self::failure($harness, JobFailedError::class);
 
-        self::assertInstanceOf(JobFailedError::class, $error);
+        self::assertSame(JobFailedError::class, $error::class);
+        self::assertSame('job_failed', $error->errorCode);
+        self::assertNull($error->status);
+        self::assertSame('job_1', $error->jobId);
         self::assertSame('media_undecodable', $error->failureKind);
         self::assertNotNull($error->resumeToken);
     }
@@ -889,5 +892,81 @@ final class PipelineTest extends TestCase
         self::go($harness, ['concurrency' => 3]);
 
         self::assertSame(3, $harness->parts->maxPending);
+    }
+
+    public function testEveryUploadPartReachesTheTransportWithTheThreeHundredSecondTimeout(): void
+    {
+        $harness = new PipelineHarness();
+        self::go($harness);
+        self::assertCount(3, $harness->parts->sent);
+        self::assertSame([300.0, 300.0, 300.0], array_column($harness->parts->sent, 'timeout'));
+    }
+
+    /** @return iterable<string, array{int, bool}> */
+    public static function dailyBoundary(): iterable
+    {
+        yield 'exact limit' => [79, true];
+        yield 'one second above' => [80, false];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('dailyBoundary')]
+    public function testTheDailyLimitAllowsEqualityAndRefusesAnExcessBeforeCreate(int $used, bool $accepted): void
+    {
+        $harness = new PipelineHarness();
+        $harness->api->on('GET', '/v1/account', PipelineHarness::json(200, ['limits' => ['used_today_seconds' => $used, 'max_daily_seconds' => 100]]));
+        if ($accepted) {
+            self::go($harness, ['duration_seconds' => 21]);
+            self::assertCount(1, $harness->api->to('POST', '/v1/uploads'));
+        } else {
+            try {
+                self::go($harness, ['duration_seconds' => 21]);
+                self::fail('expected daily_limit');
+            } catch (HushscriptException $error) {
+                self::assertSame(\Hushscript\Exception\DailyLimitError::class, $error::class);
+                self::assertSame('daily_limit', $error->errorCode);
+                self::assertNull($error->status);
+                self::assertSame(['used_today_seconds' => 80, 'max_daily_seconds' => 100], $error->details);
+                self::assertSame('This upload would pass your daily transcription limit (1 of 1 min used in the last 24 h).', $error->hint);
+            }
+            self::assertSame(['GET /v1/account'], $harness->api->lines());
+            self::assertSame([], $harness->parts->sent);
+        }
+    }
+
+    /** @return iterable<string, array{float|int, ?string, ?string}> */
+    public static function durations(): iterable
+    {
+        yield 'too short' => [14.99, \Hushscript\Exception\FileLimitError::class, 'duration_out_of_range'];
+        yield 'minimum' => [15, null, null];
+        yield 'maximum' => [36000, null, null];
+        yield 'too long' => [36000.01, \Hushscript\Exception\FileLimitError::class, 'duration_out_of_range'];
+        yield 'NaN' => [NAN, \Hushscript\Exception\PreflightError::class, 'invalid_option'];
+        yield 'infinity' => [INF, \Hushscript\Exception\PreflightError::class, 'invalid_option'];
+        yield 'negative' => [-1, \Hushscript\Exception\PreflightError::class, 'invalid_option'];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('durations')]
+    public function testDurationBoundariesRunBeforeAnyRequest(float|int $seconds, ?string $class, ?string $code): void
+    {
+        $harness = new PipelineHarness();
+        if ($class === null) {
+            self::go($harness, ['duration_seconds' => $seconds]);
+            $requests = $harness->api->to('POST', '/v1/uploads');
+            self::assertCount(1, $requests);
+            $body = json_decode((string) $requests[0]->getBody(), true, flags: JSON_THROW_ON_ERROR);
+            self::assertIsArray($body);
+            self::assertSame($seconds, $body['duration_seconds']);
+        } else {
+            try {
+                self::go($harness, ['duration_seconds' => $seconds]);
+                self::fail('expected duration error');
+            } catch (\Hushscript\Exception\HushscriptException $error) {
+                self::assertSame($class, $error::class);
+                self::assertSame($code, $error->errorCode);
+                self::assertNull($error->status);
+            }
+            self::assertSame([], $harness->api->requests);
+            self::assertSame([], $harness->parts->sent);
+        }
     }
 }

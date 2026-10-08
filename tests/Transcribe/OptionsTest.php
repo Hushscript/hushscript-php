@@ -17,13 +17,18 @@ final class OptionsTest extends TestCase
     {
         yield 'unknown key' => [['durationSeconds' => 30]];
         yield 'concurrency zero' => [['concurrency' => 0]];
+        yield 'concurrency negative' => [['concurrency' => -1]];
         yield 'concurrency nine' => [['concurrency' => 9]];
-        yield 'concurrency float' => [['concurrency' => 2.0]];
-        yield 'concurrency string' => [['concurrency' => '4']];
+        yield 'concurrency float' => [['concurrency' => 1.5]];
+        yield 'concurrency whole float' => [['concurrency' => 2.0]];
+        yield 'concurrency string' => [['concurrency' => '2']];
+        yield 'concurrency string four' => [['concurrency' => '4']];
         yield 'wait timeout zero' => [['wait_timeout' => 0]];
         yield 'wait timeout negative' => [['wait_timeout' => -1]];
         yield 'wait timeout NaN' => [['wait_timeout' => NAN]];
         yield 'wait timeout infinite' => [['wait_timeout' => INF]];
+        yield 'duration negative' => [['duration_seconds' => -1]];
+        yield 'key 15 characters' => [['idempotency_key' => str_repeat('a', 15)]];
         yield 'duration zero' => [['duration_seconds' => 0]];
         yield 'duration NaN' => [['duration_seconds' => NAN]];
         yield 'duration infinite' => [['duration_seconds' => INF]];
@@ -41,6 +46,7 @@ final class OptionsTest extends TestCase
         yield 'title not a string' => [['title' => 5]];
         yield 'speakers not a bool' => [['speakers' => 'yes']];
         yield 'auto insights not a bool' => [['auto_insights' => 1]];
+        yield 'resume token not callable' => [['on_resume_token' => 'no_such_function_here']];
         yield 'progress not callable' => [['on_progress' => 'no_such_function_here']];
         yield 'translate_to with a number' => [['translate_to' => ['es', 3]]];
     }
@@ -49,13 +55,17 @@ final class OptionsTest extends TestCase
     #[DataProvider('invalid')]
     public function testAnInvalidOptionIsRefusedBeforeAnyRequest(array $options): void
     {
+        $harness = new \Hushscript\Tests\Support\PipelineHarness();
         try {
-            Options::forTranscribe($options);
+            $harness->pipeline->transcribe($harness->path(), $options);
             self::fail('expected a PreflightError');
         } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
             self::assertSame('invalid_option', $error->errorCode);
             self::assertNull($error->status);
         }
+        self::assertSame([], $harness->api->requests);
+        self::assertSame([], $harness->parts->sent);
     }
 
     public function testTheDefaults(): void
@@ -123,7 +133,9 @@ final class OptionsTest extends TestCase
                 $call();
                 self::fail('expected a PreflightError');
             } catch (PreflightError $error) {
+                self::assertSame(PreflightError::class, $error::class);
                 self::assertSame('invalid_option', $error->errorCode);
+                self::assertNull($error->status);
             }
         }
     }
@@ -163,5 +175,74 @@ final class OptionsTest extends TestCase
         self::assertStringNotContainsString('Closure', $dump);
         self::assertStringNotContainsString($secret, $dump);
         self::assertStringContainsString('…[callback]', $dump);
+    }
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function acceptedBoundaries(): iterable
+    {
+        yield 'concurrency eight' => [['concurrency' => 8]];
+        yield '1000 keyterms' => [['keyterms' => array_fill(0, 1000, 'term')]];
+        yield 'six words' => [['keyterms' => ['one two three four five six']]];
+        yield '64 character matter code' => [['matter_code' => str_repeat('m', 64)]];
+        yield '128 character key' => [['idempotency_key' => str_repeat('k', 128)]];
+    }
+
+    /** @param array<string, mixed> $raw */
+    #[DataProvider('acceptedBoundaries')]
+    public function testAcceptedOptionBoundariesReachCreateUnchanged(array $raw): void
+    {
+        $harness = new \Hushscript\Tests\Support\PipelineHarness();
+        $harness->pipeline->transcribe($harness->path(), $raw);
+        $create = $harness->api->to('POST', '/v1/uploads');
+        self::assertCount(1, $create);
+        $body = json_decode((string) $create[0]->getBody(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertIsArray($body);
+        $options = Options::forTranscribe($raw);
+        self::assertSame($raw['concurrency'] ?? 4, $options->concurrency);
+        self::assertSame($raw['keyterms'] ?? [], $options->keyterms);
+        self::assertSame($raw['matter_code'] ?? null, $options->matterCode);
+        if (isset($raw['idempotency_key'])) {
+            self::assertSame($raw['idempotency_key'], $body['idempotency_key']);
+        }
+        if (isset($raw['keyterms'])) {
+            self::assertIsArray($body['transcription_options']);
+            self::assertSame($raw['keyterms'], $body['transcription_options']['keyterms_prompt']);
+        }
+        if (isset($raw['matter_code'])) {
+            self::assertSame($raw['matter_code'], $body['matter_code']);
+        }
+    }
+
+    /** @return iterable<string, array{string, array<string, mixed>}> */
+    public static function invalidOtherOptions(): iterable
+    {
+        foreach (['resume', 'wait'] as $operation) {
+            yield $operation.' unknown' => [$operation, ['unknown' => 1]];
+        }
+        foreach ([0, -1, 9, 1.5, '2'] as $index => $concurrency) {
+            yield 'resume concurrency '.$index => ['resume', ['concurrency' => $concurrency]];
+        }
+    }
+
+    /** @param array<string, mixed> $raw */
+    #[DataProvider('invalidOtherOptions')]
+    public function testResumeAndWaitRejectInvalidOptionsWithoutRequests(string $operation, array $raw): void
+    {
+        $harness = new \Hushscript\Tests\Support\PipelineHarness();
+        try {
+            if ($operation === 'resume') {
+                $token = \Hushscript\Transcribe\Resume::state(\Hushscript\Tests\Support\PipelineHarness::JOB, 'key-1', $harness->size, 20)->encode();
+                $harness->pipeline->resume($token, null, $raw);
+            } else {
+                $harness->pipeline->wait('job_1', $raw);
+            }
+            self::fail('expected invalid_option');
+        } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
+            self::assertSame('invalid_option', $error->errorCode);
+            self::assertNull($error->status);
+        }
+        self::assertSame([], $harness->api->requests);
+        self::assertSame([], $harness->parts->sent);
     }
 }

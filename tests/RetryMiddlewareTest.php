@@ -13,6 +13,7 @@ use GuzzleHttp\Psr7\Utils;
 use Hushscript\Exception\ApiError;
 use Hushscript\Exception\AuthenticationError;
 use Hushscript\Exception\HushscriptException;
+use Hushscript\Exception\InsufficientBalanceError;
 use Hushscript\Exception\NetworkError;
 use Hushscript\Exception\OutcomeUnknownError;
 use Hushscript\Exception\PermissionDeniedError;
@@ -365,13 +366,17 @@ final class RetryMiddlewareTest extends TestCase
     {
         $http = new FakeHttp([self::connectFailure(28, 0.02), self::ok()]);
         $rig = new Rig($http);
-
-        $this->expectException(OutcomeUnknownError::class);
         try {
             $rig->api->request('POST', $path, body: []);
-        } finally {
-            self::assertCount(1, $http->requests);
+            self::fail('expected OutcomeUnknownError');
+        } catch (HushscriptException $error) {
+            self::assertSame(OutcomeUnknownError::class, $error::class);
+            self::assertSame('outcome_unknown', $error->errorCode);
+            self::assertNull($error->status);
+            self::assertSame($hint, $error->hint);
         }
+        self::assertCount(1, $http->requests);
+        self::assertSame([], $rig->clock->sleeps);
     }
 
     #[DataProvider('neverRoutes')]
@@ -525,7 +530,9 @@ final class RetryMiddlewareTest extends TestCase
         } catch (HushscriptException $error) {
             self::assertSame('insufficient_balance', $error->errorCode);
             self::assertSame(3001, $error->numericCode);
-            self::assertNotNull($error->hint);
+            self::assertSame(InsufficientBalanceError::class, $error::class);
+            self::assertSame(402, $error->status);
+            self::assertSame('Not enough minutes: 21 needed, 10 available. Buy a pack with the SDK\'s buy method or in the app.', $error->hint);
         }
     }
 
@@ -697,7 +704,7 @@ final class RetryMiddlewareTest extends TestCase
 
     public function testCompleteAndHeartbeatAndPartsAreRetriedOnServerErrors(): void
     {
-        foreach ([['POST', '/v1/uploads/j1/complete', 500], ['POST', '/v1/uploads/j1/heartbeat', 503], ['PUT', '/v1/uploads/j1/parts/2', 500], ['POST', '/v1/uploads/j1/complete', 429]] as [$method, $path, $status]) {
+        foreach ([['POST', '/v1/uploads/j1/complete', 500], ['POST', '/v1/uploads/j1/heartbeat', 500], ['POST', '/v1/uploads/j1/heartbeat', 503], ['PUT', '/v1/uploads/j1/parts/2', 500], ['POST', '/v1/uploads/j1/complete', 429]] as [$method, $path, $status]) {
             $http = new FakeHttp([self::reply($status), self::ok()]);
             $rig = new Rig($http);
 
@@ -707,18 +714,20 @@ final class RetryMiddlewareTest extends TestCase
         }
     }
 
-    public function testHeartbeatIsNotRetriedOn500ButCompleteIs(): void
+    public function testHeartbeatIsNotRetriedOn501(): void
     {
-        // Heartbeat is the Safe class (500 yes, 501 no); complete retries any 5xx.
         $http = new FakeHttp([self::reply(501), self::ok()]);
         $rig = new Rig($http);
-
-        $this->expectException(ApiError::class);
         try {
             $rig->api->request('POST', '/v1/uploads/j1/heartbeat', body: []);
-        } finally {
-            self::assertCount(1, $http->requests);
+            self::fail('expected ApiError');
+        } catch (ApiError $error) {
+            self::assertSame(ApiError::class, $error::class);
+            self::assertSame('http_501', $error->errorCode);
+            self::assertSame(501, $error->status);
         }
+        self::assertCount(1, $http->requests);
+        self::assertSame([], $rig->clock->sleeps);
     }
 
     public function testCompleteRetriesAnyFiveHundred(): void
@@ -939,17 +948,24 @@ final class RetryMiddlewareTest extends TestCase
         self::assertSame([], $rig->logLines);
     }
 
-    public function testTheDefaultJitterStaysInsideTheCeiling(): void
+    public function testTheDefaultJitterSamplesTheWholeRangeInsideTheCeiling(): void
     {
-        $clock = new FakeClock();
-        $http = new FakeHttp([self::reply(503), self::ok()]);
-        $credentials = new \Hushscript\Credentials(Tokens::TEST);
-        $transport = new \Hushscript\Http\RetryMiddleware($http, $credentials, Rig::BASE, $clock, new \Hushscript\Log(), 3);
-
-        $transport->sendRequest(new Request('GET', Rig::BASE.'/v1/account'));
-
-        self::assertCount(1, $clock->sleeps);
-        self::assertGreaterThanOrEqual(0.0, $clock->sleeps[0]);
-        self::assertLessThanOrEqual(0.5, $clock->sleeps[0]);
+        $samples = [];
+        for ($index = 0; $index < 128; $index++) {
+            $clock = new FakeClock();
+            $http = new FakeHttp([self::reply(503), self::ok()]);
+            $credentials = new \Hushscript\Credentials(Tokens::TEST);
+            $transport = new \Hushscript\Http\RetryMiddleware($http, $credentials, Rig::BASE, $clock, new \Hushscript\Log(), 3);
+            $transport->sendRequest(new Request('GET', Rig::BASE.'/v1/account'));
+            self::assertCount(1, $clock->sleeps);
+            self::assertCount(2, $http->requests);
+            $samples[] = $clock->sleeps[0];
+        }
+        self::assertNotEmpty($samples);
+        self::assertGreaterThanOrEqual(0.0, min($samples));
+        self::assertLessThanOrEqual(0.5, max($samples));
+        self::assertLessThan(0.125, min($samples));
+        self::assertGreaterThan(0.375, max($samples));
+        self::assertGreaterThan(1, count(array_unique($samples)));
     }
 }

@@ -67,4 +67,5 @@ jobs:
           PHP_VERSION: ${{ matrix.php }}
           CONFORMANCE_CONTEXT: ../conformance
           CONFORMANCE_DIR: ../conformance
+          CONFORMANCE_STRICT: "1"
         run: just ci "$PHP_VERSION"

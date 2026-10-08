@@ -1,8 +1,8 @@
 {
     "$schema": "vendor/infection/infection/resources/schema.json",
-    // Nightly, not on PRs (spec 13.2): the HTTP core and the transcribe pipeline once it exists.
+    // Nightly, not on PRs (spec 13.2): the HTTP core and the transcribe pipeline.
     "source": {
-        "directories": ["src/Http"]
+        "directories": ["src/Http", "src/Transcribe"]
     },
     "tmpDir": "/tmp/infection",
     "logs": {

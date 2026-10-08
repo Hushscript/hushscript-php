@@ -19,6 +19,7 @@ use Hushscript\Page;
 use Hushscript\Purchase;
 use Hushscript\Transaction;
 use Hushscript\Transcribe\Options;
+use Hushscript\Transcribe\Shape;
 
 /** Packs, saved cards, purchases and the billing history (spec 6.5). */
 final class Billing
@@ -56,9 +57,7 @@ final class Billing
      */
     public function setDefaultCard(string $cardId): void
     {
-        if ($cardId === '') {
-            throw new PreflightError('card_id is a saved card\'s id.', 'invalid_option');
-        }
+        Shape::segment($cardId, 'card_id');
         $this->exchange->request('POST', '/v1/billing/cards/default', [], ['payment_method_id' => $cardId]);
     }
 

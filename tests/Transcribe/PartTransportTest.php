@@ -134,4 +134,22 @@ final class PartTransportTest extends TestCase
         self::assertSame(300.0, $seen['timeout'] ?? null);
         self::assertFalse($seen['allow_redirects'] ?? true);
     }
+
+    public function testTheMultiTransportForwardsTheRequestedPartTimeoutToGuzzle(): void
+    {
+        $transport = new GuzzleMultiTransport(5.0);
+        $client = (new \ReflectionProperty(GuzzleMultiTransport::class, 'client'))->getValue($transport);
+        self::assertInstanceOf(GuzzleClient::class, $client);
+        $config = (new \ReflectionProperty(GuzzleClient::class, 'config'))->getValue($client);
+        self::assertIsArray($config);
+        $stack = $config['handler'];
+        self::assertInstanceOf(\GuzzleHttp\HandlerStack::class, $stack);
+        $seen = [];
+        $stack->setHandler(static function (\Psr\Http\Message\RequestInterface $request, array $options) use (&$seen): PromiseInterface {
+            $seen = $options;
+            return \GuzzleHttp\Promise\Create::promiseFor(new \GuzzleHttp\Psr7\Response(200));
+        });
+        $transport->send(new Request('PUT', 'http://127.0.0.1:1/part'), 300.0)->wait();
+        self::assertSame(300.0, $seen['timeout'] ?? null);
+    }
 }

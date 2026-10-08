@@ -50,7 +50,7 @@ function batchFolderExample(string $folder, string $out): int
     return $failed ? 1 : 0;
 }
 
-$arguments = array_slice($argv, 1);
+$arguments = array_slice($argv ?? [], 1);
 if ($arguments === []) {
     $arguments = ['recordings', 'transcripts'];
 }

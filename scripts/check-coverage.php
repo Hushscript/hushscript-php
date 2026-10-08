@@ -25,6 +25,10 @@ if ($metrics === null) {
 }
 $statements = (int) $metrics['statements'];
 $covered = (int) $metrics['coveredstatements'];
-$percent = $statements === 0 ? 100.0 : $covered / $statements * 100;
+if ($statements === 0) {
+    fwrite(STDERR, "the clover report has zero statements\n");
+    exit(1);
+}
+$percent = $covered / $statements * 100;
 printf("line coverage %.2f%% (%d of %d), floor %.0f%%\n", $percent, $covered, $statements, $floor);
 exit($percent + 1e-9 >= $floor ? 0 : 1);

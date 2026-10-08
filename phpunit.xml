@@ -8,6 +8,8 @@
          beStrictAboutOutputDuringTests="true"
          beStrictAboutTestsThatDoNotTestAnything="true"
          failOnRisky="true"
+         failOnSkipped="true"
+         failOnIncomplete="true"
          failOnWarning="true"
          failOnDeprecation="true"
          failOnNotice="true"

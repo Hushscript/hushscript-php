@@ -16,6 +16,7 @@ use Hushscript\Exception\PermissionDeniedError;
 use Hushscript\Exception\RateLimitError;
 use Hushscript\Exception\UploadError;
 use Hushscript\Exception\ValidationError;
+use Hushscript\Generated\Catalog;
 use Hushscript\Tests\Support\FakeHttp;
 use Hushscript\Tests\Support\Tokens;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -108,12 +109,36 @@ final class ErrorMapperTest extends TestCase
         self::assertSame('The API answered 502 (http_502).', $error->getMessage());
     }
 
-    public function testTheMessageIsTheCatalogMeaning(): void
+    /** @return iterable<string, array{string, class-string<HushscriptException>}> */
+    public static function catalogMessages(): iterable
+    {
+        yield 'balance' => ['insufficient_balance', InsufficientBalanceError::class];
+        yield 'authentication' => ['unauthorized', AuthenticationError::class];
+        yield 'rate limit' => ['rate_limited', RateLimitError::class];
+    }
+
+    /** @param class-string<HushscriptException> $class */
+    #[DataProvider('catalogMessages')]
+    public function testTheMessageIsTheCatalogMeaning(string $slug, string $class): void
+    {
+        $entry = Catalog::ENTRIES[$slug];
+        $error = self::map($entry['status'], ['error' => $slug, 'code' => $entry['code']]);
+
+        self::assertSame($class, $error::class);
+        self::assertSame($slug, $error->errorCode);
+        self::assertSame($entry['status'], $error->status);
+        self::assertSame($entry['code'], $error->numericCode);
+        self::assertSame($entry['meaning'], $error->getMessage());
+    }
+
+    public function testTheBalanceMessageMatchesTheApiCatalogMeaning(): void
     {
         $error = self::map(402, ['error' => 'insufficient_balance', 'code' => 3001]);
 
-        self::assertNotSame('', $error->getMessage());
-        self::assertStringNotContainsString('The API answered', $error->getMessage());
+        self::assertSame(
+            'The account\'s balance cannot cover the requested seconds. The error body\'s needed_seconds and balance_seconds report the shortfall; top up before retrying.',
+            $error->getMessage(),
+        );
     }
 
     public function testExtraKeysAndNestedDetailsBecomeSnakeCaseDetails(): void
@@ -220,6 +245,21 @@ final class ErrorMapperTest extends TestCase
 
         self::assertSame($expected, $nested->retryAfter);
         self::assertSame($expected, $top->retryAfter);
+    }
+
+    public function testANegativeRetryAfterDetailDropsTheHintSentence(): void
+    {
+        foreach (['agent_purchase_capped' => [4038, 'This account has used its 3 purchase attempts for the last 24 hours.'], 'rate_limited' => [5000, 'Too many requests.']] as $slug => [$numericCode, $hint]) {
+            foreach ([['retry_after_seconds' => -1], ['details' => ['retry_after_seconds' => -1]]] as $details) {
+                $error = self::map(429, ['error' => $slug, 'code' => $numericCode] + $details);
+
+                self::assertSame(RateLimitError::class, $error::class);
+                self::assertSame($slug, $error->errorCode);
+                self::assertSame(429, $error->status);
+                self::assertNull($error->retryAfter);
+                self::assertSame($hint, $error->hint);
+            }
+        }
     }
 
     public function testTheTokenIsScrubbedFromEveryField(): void

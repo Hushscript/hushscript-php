@@ -34,7 +34,7 @@ function transcribeExample(array $arguments): int
 }
 
 try {
-    exit(transcribeExample(array_slice($argv, 1)));
+    exit(transcribeExample(array_slice($argv ?? [], 1)));
 } catch (HushscriptException $error) {
     fwrite(STDERR, "{$error->errorCode}: ".($error->hint ?? $error->getMessage())."\n");
     if ($error->resumeToken !== null) {

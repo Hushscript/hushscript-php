@@ -6,7 +6,6 @@ namespace Hushscript\Tests\Transcribe;
 
 use GuzzleHttp\Psr7\Response;
 use Hushscript\Client;
-use Hushscript\Exception\HushscriptException;
 use Hushscript\Exception\PreflightError;
 use Hushscript\Exception\ResumeMismatchError;
 use Hushscript\Exception\UnsupportedMediaError;
@@ -595,10 +594,56 @@ final class StreamInputTest extends TestCase
         try {
             $harness->pipeline->transcribe($stream, []);
             self::fail('expected an error');
-        } catch (HushscriptException $error) {
+        } catch (\Hushscript\Exception\ApiError $error) {
+            self::assertSame(\Hushscript\Exception\ApiError::class, $error::class);
+            self::assertSame('http_500', $error->errorCode);
+            self::assertSame(500, $error->status);
             self::assertNotNull($error->idempotencyKey);
+            $creates = $harness->api->to('POST', '/v1/uploads');
+            self::assertCount(4, $creates);
+            foreach ($creates as $request) {
+                $body = json_decode((string) $request->getBody(), true, flags: JSON_THROW_ON_ERROR);
+                self::assertIsArray($body);
+                self::assertSame($body['idempotency_key'], $error->idempotencyKey);
+            }
         }
         self::assertTrue(is_resource($stream));
         self::assertSame([], $parts->requests);
+    }
+
+    /** @return iterable<string, array{int, bool}> */
+    public static function sizeBoundary(): iterable
+    {
+        yield 'maximum' => [5_000_000_000, true];
+        yield 'one byte above' => [5_000_000_001, false];
+    }
+
+    #[DataProvider('sizeBoundary')]
+    public function testForwardOnlyStreamSizeLimitRunsBeforeRequests(int $size, bool $accepted): void
+    {
+        $harness = new PipelineHarness();
+        $stream = $this->pipe($harness->path());
+        $stop = new \DomainException('stop after preflight');
+        try {
+            $harness->pipeline->transcribe($stream, ['size' => $size, 'duration_seconds' => 20, 'on_resume_token' => static function () use ($stop): never {
+                throw $stop;
+            }]);
+            self::fail('expected boundary outcome');
+        } catch (\Throwable $error) {
+            if ($accepted) {
+                self::assertSame($stop, $error);
+                self::assertSame(['GET /v1/account', 'POST /v1/uploads'], $harness->api->lines());
+                $create = $harness->api->to('POST', '/v1/uploads')[0];
+                $body = json_decode((string) $create->getBody(), true, flags: JSON_THROW_ON_ERROR);
+                self::assertIsArray($body);
+                self::assertSame($size, $body['size_bytes']);
+            } else {
+                self::assertSame(\Hushscript\Exception\FileLimitError::class, $error::class);
+                self::assertSame('size_out_of_range', $error->errorCode);
+                self::assertNull($error->status);
+                self::assertSame([], $harness->api->requests);
+            }
+        }
+        self::assertSame([], $harness->parts->sent);
     }
 }

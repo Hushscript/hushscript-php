@@ -201,15 +201,71 @@ final class AgentTest extends TestCase
             Client::agentSignup($request, self::options($http));
             self::fail('expected invalid_option');
         } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
             self::assertSame('invalid_option', $error->errorCode);
+            self::assertNull($error->status);
         }
         self::assertSame(0, $http->count());
     }
 
-    public function testAnUnknownOptionIsAConfigurationError(): void
+    /** @return iterable<string, array{string, array<string, mixed>}> */
+    public static function unknownOptions(): iterable
     {
-        $this->expectException(ConfigurationError::class);
-        Client::agentSignup(self::request(), ['max_retries' => 0]);
+        foreach (['signup', 'claim'] as $operation) {
+            yield $operation.' retry setting' => [$operation, ['max_retries' => 0]];
+            yield $operation.' unknown setting' => [$operation, ['future_option' => true]];
+        }
+    }
+
+    /** @param array<string, mixed> $options */
+    #[DataProvider('unknownOptions')]
+    public function testAnUnknownOptionIsAConfigurationError(string $operation, array $options): void
+    {
+        $http = new FakeHttp();
+        try {
+            $options += self::options($http);
+            if ($operation === 'signup') {
+                Client::agentSignup(self::request(), $options);
+            } else {
+                Client::agentClaim('sg_1', 'cs_secret_0123456789ab', $options);
+            }
+            self::fail('expected ConfigurationError');
+        } catch (HushscriptException $error) {
+            self::assertSame(ConfigurationError::class, $error::class);
+            self::assertSame('config_invalid', $error->errorCode);
+            self::assertNull($error->status);
+        }
+        self::assertSame(0, $http->count());
+    }
+
+    /** @return iterable<string, array{string, mixed}> */
+    public static function badBaseUrls(): iterable
+    {
+        foreach (ConfigTest::badBaseUrls() as $name => [$url]) {
+            yield 'signup '.$name => ['signup', $url];
+            yield 'claim '.$name => ['claim', $url];
+        }
+    }
+
+    #[DataProvider('badBaseUrls')]
+    public function testABadBaseUrlIsRefusedBeforeAnyAgentRequest(string $operation, mixed $url): void
+    {
+        $http = new FakeHttp();
+        $options = ['base_url' => $url] + self::options($http);
+        try {
+            if ($operation === 'signup') {
+                Client::agentSignup(self::request(), $options);
+            } else {
+                Client::agentClaim('sg_1', 'cs_secret_0123456789ab', $options);
+            }
+            self::fail('expected ConfigurationError');
+        } catch (HushscriptException $error) {
+            self::assertSame(ConfigurationError::class, $error::class);
+            self::assertSame('config_invalid', $error->errorCode);
+            self::assertNull($error->status);
+            self::assertNull($error->hint);
+        }
+        self::assertSame(0, $http->count());
     }
 
     public function testAStaleTermsVersionIsA422AndTheHintQuotesTheCurrentOne(): void
@@ -230,13 +286,15 @@ final class AgentTest extends TestCase
     public function testASignupIsNeverRetried(): void
     {
         $http = new FakeHttp([FakeHttp::json(503), FakeHttp::json(200, self::signedUp())]);
-
-        $this->expectException(ApiError::class);
         try {
             Client::agentSignup(self::request(), self::options($http));
-        } finally {
-            self::assertSame(1, $http->count());
+            self::fail('expected ApiError');
+        } catch (ApiError $error) {
+            self::assertSame(ApiError::class, $error::class);
+            self::assertSame('http_503', $error->errorCode);
+            self::assertSame(503, $error->status);
         }
+        self::assertSame(1, $http->count());
     }
 
     public function testALostSignupIsAnUnknownOutcomeWithNoHint(): void
@@ -319,7 +377,9 @@ final class AgentTest extends TestCase
             Client::agentClaim($id, 'cs_secret_0123456789ab', self::options($http));
             self::fail('expected invalid_option');
         } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
             self::assertSame('invalid_option', $error->errorCode);
+            self::assertNull($error->status);
         }
         self::assertSame(0, $http->count());
     }

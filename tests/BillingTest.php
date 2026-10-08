@@ -14,6 +14,7 @@ use Hushscript\Exception\NetworkError;
 use Hushscript\Exception\PaymentMethodRequiredError;
 use Hushscript\Exception\PermissionDeniedError;
 use Hushscript\Exception\PreflightError;
+use Hushscript\Exception\ValidationError;
 use Hushscript\Resource\Billing;
 use Hushscript\Tests\Support\FakeClock;
 use Hushscript\Tests\Support\FakeHttp;
@@ -145,26 +146,46 @@ final class BillingTest extends TestCase
         self::assertSame([], $cards->cards);
     }
 
-    public function testSettingTheDefaultCardPostsItsId(): void
+    /** @return iterable<string, array{string}> */
+    public static function cardIds(): iterable
+    {
+        yield 'plain' => ['pm_2'];
+        yield 'reserved and Unicode' => ['pm %?#é'];
+    }
+
+    #[DataProvider('cardIds')]
+    public function testSettingTheDefaultCardPostsItsId(string $cardId): void
     {
         $http = new FakeHttp([FakeHttp::json(200, ['ok' => true])]);
 
-        self::billing($http)->setDefaultCard('pm_2');
+        self::billing($http)->setDefaultCard($cardId);
 
         self::assertSame('POST', $http->requests[0]->getMethod());
         self::assertSame('/v1/billing/cards/default', $http->requests[0]->getUri()->getPath());
-        self::assertSame(['payment_method_id' => 'pm_2'], self::sent($http->requests[0]));
+        self::assertSame(['payment_method_id' => $cardId], self::sent($http->requests[0]));
     }
 
-    public function testAnEmptyCardIdIsRefusedBeforeAnyRequest(): void
+    /** @return iterable<string, array{string}> */
+    public static function badCardIds(): iterable
+    {
+        yield 'empty' => [''];
+        yield 'dot' => ['.'];
+        yield 'dot dot' => ['..'];
+        yield 'invalid UTF-8' => ["\xff"];
+    }
+
+    #[DataProvider('badCardIds')]
+    public function testAnUnusableCardIdIsRefusedBeforeAnyRequest(string $cardId): void
     {
         $http = new FakeHttp();
 
         try {
-            self::billing($http)->setDefaultCard('');
+            self::billing($http)->setDefaultCard($cardId);
             self::fail('expected invalid_option');
         } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
             self::assertSame('invalid_option', $error->errorCode);
+            self::assertNull($error->status);
         }
         self::assertSame(0, $http->count());
     }
@@ -194,11 +215,17 @@ final class BillingTest extends TestCase
 
     public function testAnEmptyAddCardUrlIsBadResponse(): void
     {
-        $billing = self::billing(new FakeHttp([FakeHttp::json(200, ['checkout_url' => ''])]));
-
-        $this->expectException(ApiError::class);
-        $this->expectExceptionMessage('cannot read');
-        $billing->addCardUrl();
+        $http = new FakeHttp([FakeHttp::json(200, ['checkout_url' => ''])]);
+        try {
+            self::billing($http)->addCardUrl();
+            self::fail('expected ApiError');
+        } catch (ApiError $error) {
+            self::assertSame(ApiError::class, $error::class);
+            self::assertSame('bad_response', $error->errorCode);
+            self::assertSame(200, $error->status);
+            self::assertStringContainsString('cannot read', $error->getMessage());
+        }
+        self::assertSame(1, $http->count());
     }
 
     public function testBuyReadsTheCardsThenChargesTheDefaultOne(): void
@@ -262,16 +289,29 @@ final class BillingTest extends TestCase
         yield '129 characters' => [str_repeat('a', 129)];
     }
 
-    #[DataProvider('badKeys')]
-    public function testAMalformedKeyIsRefusedBeforeAnyRequest(string $key): void
+    /** @return iterable<string, array{bool, string}> */
+    public static function badPurchaseKeys(): iterable
+    {
+        foreach (self::badKeys() as $name => [$key]) {
+            yield 'billing '.$name => [false, $key];
+            yield 'client '.$name => [true, $key];
+        }
+    }
+
+    #[DataProvider('badPurchaseKeys')]
+    public function testAMalformedKeyIsRefusedBeforeAnyRequest(bool $clientEntry, string $key): void
     {
         $http = new FakeHttp();
-
+        $buyer = $clientEntry
+            ? new Client(Tokens::TEST, ['base_url' => Rig::BASE, 'http_client' => $http, 'clock' => new FakeClock()])
+            : self::billing($http);
         try {
-            self::billing($http)->buy('45min', false, $key);
+            $buyer->buy('45min', false, $key);
             self::fail('expected invalid_option');
         } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
             self::assertSame('invalid_option', $error->errorCode);
+            self::assertNull($error->status);
             self::assertNull($error->idempotencyKey);
         }
         self::assertSame(0, $http->count());
@@ -286,16 +326,29 @@ final class BillingTest extends TestCase
         self::assertSame(2, $http->count());
     }
 
-    public function testAnEmptyPackIsRefusedBeforeAnyRequest(): void
+    /** @return iterable<string, array{bool}> */
+    public static function purchaseEntryPoints(): iterable
+    {
+        yield 'billing' => [false];
+        yield 'client' => [true];
+    }
+
+    #[DataProvider('purchaseEntryPoints')]
+    public function testAnEmptyPackIsRefusedBeforeAnyRequest(bool $clientEntry): void
     {
         $http = new FakeHttp();
-
-        $this->expectException(PreflightError::class);
+        $buyer = $clientEntry
+            ? new Client(Tokens::TEST, ['base_url' => Rig::BASE, 'http_client' => $http, 'clock' => new FakeClock()])
+            : self::billing($http);
         try {
-            self::billing($http)->buy('');
-        } finally {
-            self::assertSame(0, $http->count());
+            $buyer->buy('');
+            self::fail('expected PreflightError');
+        } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
+            self::assertSame('invalid_option', $error->errorCode);
+            self::assertNull($error->status);
         }
+        self::assertSame(0, $http->count());
     }
 
     public function testWithNoDefaultTheOnlyChargeableCardIsUsed(): void
@@ -347,13 +400,16 @@ final class BillingTest extends TestCase
     public function testABadCardListStopsBeforeThePurchase(): void
     {
         $http = new FakeHttp([FakeHttp::json(200, ['default_id' => 'pm_1'])]);
-
-        $this->expectException(ApiError::class);
         try {
             self::billing($http)->buy('300min');
-        } finally {
-            self::assertSame(1, $http->count());
+            self::fail('expected ApiError');
+        } catch (ApiError $error) {
+            self::assertSame(ApiError::class, $error::class);
+            self::assertSame('bad_response', $error->errorCode);
+            self::assertSame(200, $error->status);
         }
+        self::assertSame(1, $http->count());
+        self::assertSame([], self::to($http, '/v1/billing/purchase'));
     }
 
     public function testA502IsRetriedOnceWithTheSameKeyAndTheSecondAnswerWins(): void
@@ -408,7 +464,11 @@ final class BillingTest extends TestCase
             self::billing($http)->buy('300min', false, 'retry_me');
             self::fail('expected an error');
         } catch (HushscriptException $error) {
+            self::assertSame(ValidationError::class, $error::class);
+            self::assertSame('bad_request', $error->errorCode);
+            self::assertSame(400, $error->status);
             self::assertSame('retry_me', $error->idempotencyKey);
+            self::assertSame(self::sent($http->requests[1])['idempotency_key'], $error->idempotencyKey);
         }
     }
 
@@ -420,8 +480,13 @@ final class BillingTest extends TestCase
         try {
             self::billing($http)->buy('300min');
             self::fail('expected NetworkError');
-        } catch (NetworkError $error) {
+        } catch (HushscriptException $error) {
+            self::assertSame(NetworkError::class, $error::class);
+            self::assertSame('network_error', $error->errorCode);
+            self::assertNull($error->status);
             self::assertNotNull($error->idempotencyKey);
+            self::assertSame(self::sent($http->requests[1])['idempotency_key'], $error->idempotencyKey);
+            self::assertSame(self::sent($http->requests[2])['idempotency_key'], $error->idempotencyKey);
             self::assertCount(2, self::to($http, '/v1/billing/purchase'));
         }
     }
@@ -434,8 +499,13 @@ final class BillingTest extends TestCase
         try {
             self::billing($http)->buy('300min', false, 'k1');
             self::fail('expected NetworkError');
-        } catch (NetworkError $error) {
+        } catch (HushscriptException $error) {
+            self::assertSame(NetworkError::class, $error::class);
+            self::assertSame('network_error', $error->errorCode);
+            self::assertNull($error->status);
             self::assertSame('k1', $error->idempotencyKey);
+            self::assertSame(self::sent($http->requests[1])['idempotency_key'], $error->idempotencyKey);
+            self::assertSame(self::sent($http->requests[2])['idempotency_key'], $error->idempotencyKey);
         }
     }
 
@@ -463,7 +533,9 @@ final class BillingTest extends TestCase
         } catch (ApiError $error) {
             self::assertSame('bad_response', $error->errorCode);
             self::assertSame(200, $error->status);
+            self::assertSame(ApiError::class, $error::class);
             self::assertNotNull($error->idempotencyKey, 'the charge may have happened: the key must come back');
+            self::assertSame(self::sent($http->requests[1])['idempotency_key'], $error->idempotencyKey);
         }
         self::assertCount(1, self::to($http, '/v1/billing/purchase'));
         self::assertSame(2, $http->count());
@@ -478,6 +550,7 @@ final class BillingTest extends TestCase
             self::fail('expected an SDK error');
         } catch (HushscriptException $error) {
             self::assertNotNull($error->idempotencyKey);
+            self::assertSame(self::sent($http->requests[1])['idempotency_key'], $error->idempotencyKey);
             self::assertStringNotContainsString(Tokens::TEST, print_r($error, true).$error->getMessage().(string) $error->getPrevious()?->getMessage());
         }
     }

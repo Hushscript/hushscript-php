@@ -18,15 +18,18 @@ require __DIR__.'/../vendor/autoload.php';
 const NOTICE = 'Minutes are added to your account instantly after payment. All purchases are final and non-refundable.';
 
 // The statuses of an answer that charged nothing: refusals the server decides from the request alone (400, a 403
-// such as 4021 or 4023, 404, 422) and a 402, which comes after the server's replay of a completed purchase. A 401
+// with numeric code 4021 or 4023, 404, 422) and a 402, which comes after the server's replay of a completed purchase. A 401
 // or a 429 is not on the list: both run before that replay, so after the SDK's one retry they can follow a first
 // attempt that charged the card. Any other outcome after the request was sent may have reached the card too.
-const REFUSALS = [400, 402, 403, 404, 422];
+const REFUSALS = [400, 402, 404, 422];
 
-/** True when the purchase request went out and the answer was not one of the refusals. */
+/** True when a failed buy carries a key and the answer does not prove a refusal. */
 function mayHaveCharged(HushscriptException $error): bool
 {
-    return $error->idempotencyKey !== null && ! in_array($error->status, REFUSALS, true);
+    $refused = in_array($error->status, REFUSALS, true)
+        || ($error->status === 403 && in_array($error->numericCode, [4021, 4023], true));
+
+    return $error->idempotencyKey !== null && ! $refused;
 }
 
 function report(HushscriptException $error): void
@@ -83,9 +86,11 @@ function buyExample(array $arguments): int
     return 0;
 }
 
-try {
-    exit(buyExample(array_slice($argv, 1)));
-} catch (HushscriptException $error) {
-    report($error);
-    exit(1);
+if (! defined('HUSHSCRIPT_EXAMPLE_NO_MAIN')) {
+    try {
+        exit(buyExample(array_slice($argv ?? [], 1)));
+    } catch (HushscriptException $error) {
+        report($error);
+        exit(1);
+    }
 }

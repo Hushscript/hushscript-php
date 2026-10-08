@@ -61,17 +61,23 @@ final class ResourcesTest extends TestCase
     public function testTheAccountCarriesItsLimits(): void
     {
         $http = new FakeHttp([FakeHttp::json(200, [
-            'balance_seconds' => 600, 'held_seconds' => 0, 'credits_expire_at' => null, 'card_on_file' => true, 'data_region' => 'eu',
+            'balance_seconds' => 600, 'held_seconds' => 71, 'credits_expire_at' => 1760000300, 'purchases_remaining_in_window' => 2, 'card_on_file' => true, 'data_region' => 'eu',
             'limits' => ['max_daily_seconds' => 108000, 'max_active_jobs' => 3, 'active_jobs' => 1, 'used_today_seconds' => 60],
         ])]);
 
         $info = (new Account((new Rig($http))->exchange))->account();
 
+        self::assertSame(600, $info->balanceSeconds);
+        self::assertSame(71, $info->heldSeconds);
+        self::assertSame(1760000300, $info->creditsExpireAt?->getTimestamp());
+        self::assertSame('UTC', $info->creditsExpireAt->getTimezone()->getName());
+        self::assertSame(3, $info->limits->maxActiveJobs);
+        self::assertSame(60, $info->limits->usedTodaySeconds);
         self::assertTrue($info->cardOnFile);
         self::assertSame('eu', $info->dataRegion);
         self::assertSame(108000, $info->limits->maxDailySeconds);
         self::assertSame(1, $info->limits->activeJobs);
-        self::assertNull($info->purchasesRemainingInWindow);
+        self::assertSame(2, $info->purchasesRemainingInWindow);
     }
 
     public function testAListWalksEveryPageLazilyAndSendsTheCursor(): void
@@ -128,7 +134,9 @@ final class ResourcesTest extends TestCase
             }
             self::fail('expected a pagination_loop');
         } catch (HushscriptException $error) {
+            self::assertSame(HushscriptException::class, $error::class);
             self::assertSame('pagination_loop', $error->errorCode);
+            self::assertNull($error->status);
         }
 
         self::assertSame(['tr_001', 'tr_002'], $seen);
@@ -155,7 +163,9 @@ final class ResourcesTest extends TestCase
             (new Transcripts((new Rig($http))->exchange))->list($options); // @phpstan-ignore argument.type
             self::fail('expected invalid_option');
         } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
             self::assertSame('invalid_option', $error->errorCode);
+            self::assertNull($error->status);
         }
 
         self::assertCount(0, $http->requests);
@@ -182,7 +192,9 @@ final class ResourcesTest extends TestCase
             $transcripts->get($id);
             self::fail('expected invalid_option');
         } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
             self::assertSame('invalid_option', $error->errorCode);
+            self::assertNull($error->status);
         }
 
         self::assertCount(0, $http->requests);
@@ -251,19 +263,52 @@ final class ResourcesTest extends TestCase
         self::assertSame('active=true&cursor=c2', self::sorted($http->requests[1]->getUri()->getQuery()));
     }
 
-    public function testJobsListRefusesAnUnknownOptionAtTheCall(): void
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function invalidJobsOptions(): iterable
     {
-        $this->expectException(PreflightError::class);
+        yield 'unknown' => [['bogus' => true]];
+        yield 'active string' => [['active' => 'yes']];
+    }
 
-        (new Jobs((new Rig(new FakeHttp([])))->exchange, (new PipelineHarness())->pipeline))->list(['bogus' => true]);
+    /** @param array<string, mixed> $options */
+    #[DataProvider('invalidJobsOptions')]
+    public function testJobsListRefusesInvalidOptionsBeforeAnyRequest(array $options): void
+    {
+        $http = new FakeHttp();
+        try {
+            (new Jobs((new Rig($http))->exchange, (new PipelineHarness())->pipeline))->list($options);
+            self::fail('expected invalid_option');
+        } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
+            self::assertSame('invalid_option', $error->errorCode);
+            self::assertNull($error->status);
+        }
+        self::assertSame([], $http->requests);
     }
 
     public function testJobsGetReturnsTheFullShapeAndPassesAnUnknownStateThrough(): void
     {
-        $http = new FakeHttp([FakeHttp::json(200, PipelineHarness::jobBody('reticulating', ['transcript_id' => null, 'private_result_key' => 'x', 'fetch_url' => 'https://secret.example/']))]);
+        $http = new FakeHttp([FakeHttp::json(200, PipelineHarness::jobBody('reticulating', ['transcript_id' => 'tr_shape', 'declared_seconds' => 31, 'verified_seconds' => 32, 'actual_seconds' => 33, 'billable_seconds' => 34, 'retry_of' => 'job_original', 'error' => 'opaque failure', 'failure_kind' => 'media_unreadable', 'options' => ['language_code' => 'de', 'speaker_detection' => false, 'medical_mode' => true, 'multichannel' => false, 'translation_targets' => ['es', 'fr'], 'keyterms' => true, 'prompt' => false, 'auto_generate_insights' => true], 'private_result_key' => 'x', 'fetch_url' => 'https://secret.example/']))]);
 
         $job = (new Jobs((new Rig($http))->exchange, (new PipelineHarness())->pipeline))->get('job_1');
 
+        self::assertSame('job_1', $job->id);
+        self::assertSame('tr_shape', $job->transcriptId);
+        self::assertSame('opaque failure', $job->error);
+        self::assertSame('media_unreadable', $job->failureKind);
+        self::assertSame(31, $job->declaredSeconds);
+        self::assertSame(32, $job->verifiedSeconds);
+        self::assertSame(33, $job->actualSeconds);
+        self::assertSame(34, $job->billableSeconds);
+        self::assertSame('job_original', $job->retryOf);
+        self::assertSame('de', $job->options->languageCode);
+        self::assertFalse($job->options->speakerDetection);
+        self::assertTrue($job->options->medicalMode);
+        self::assertFalse($job->options->multichannel);
+        self::assertSame(['es', 'fr'], $job->options->translationTargets);
+        self::assertTrue($job->options->keyterms);
+        self::assertFalse($job->options->prompt);
+        self::assertTrue($job->options->autoGenerateInsights);
         self::assertSame('reticulating', $job->state);
         self::assertSame('standard', $job->mode);
         self::assertSame(1760000000, $job->createdAt->getTimestamp());
@@ -280,14 +325,18 @@ final class ResourcesTest extends TestCase
             $jobs->get('..');
             self::fail('expected invalid_option');
         } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
             self::assertSame('invalid_option', $error->errorCode);
+            self::assertNull($error->status);
             self::assertCount(0, $http->requests);
         }
         try {
             $jobs->get('job_1');
             self::fail('expected bad_response');
         } catch (ApiError $error) {
+            self::assertSame(ApiError::class, $error::class);
             self::assertSame('bad_response', $error->errorCode);
+            self::assertSame(200, $error->status);
         }
     }
 
@@ -311,4 +360,161 @@ final class ResourcesTest extends TestCase
         self::assertSame('done', $job->state);
         self::assertSame('tr_1', $job->transcriptId);
     }
+
+    public function testOneTranscriptPageReturnsEverySummaryFieldAndTheNextCursor(): void
+    {
+        $row = ['id' => 'tr_page', 'title' => 'Quarterly review', 'language_detected' => 'fr', 'duration_seconds' => 137, 'created_at' => 1760000200, 'auto_delete_at' => 1760000800, 'tags' => ['finance', 'review']];
+        $http = new FakeHttp([self::page([$row], 'next-page')]);
+        $page = (new Transcripts((new Rig($http))->exchange))->page(['cursor' => 'previous-page', 'page_size' => 7]);
+
+        self::assertCount(1, $page->items);
+        self::assertSame('next-page', $page->nextCursor);
+        self::assertSame(['cursor=previous-page&limit=7'], self::queries($http));
+        $item = $page->items[0];
+        self::assertSame('tr_page', $item->id);
+        self::assertSame('Quarterly review', $item->title);
+        self::assertSame('fr', $item->language);
+        self::assertSame(137, $item->durationSeconds);
+        self::assertSame(1760000200, $item->createdAt->getTimestamp());
+        self::assertSame(1760000800, $item->autoDeleteAt?->getTimestamp());
+        self::assertSame('UTC', $item->createdAt->getTimezone()->getName());
+        self::assertSame(['finance', 'review'], $item->tags);
+    }
+
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function invalidPageOptions(): iterable
+    {
+        yield 'cursor number' => [['cursor' => 5]];
+        yield 'zero' => [['page_size' => 0]];
+        yield 'negative' => [['page_size' => -1]];
+        yield 'unknown' => [['foo' => 1]];
+    }
+
+    /** @param array<string, mixed> $options */
+    #[DataProvider('invalidPageOptions')]
+    public function testInvalidPageOptionsSendNoRequest(array $options): void
+    {
+        $http = new FakeHttp();
+        try {
+            (new Transcripts((new Rig($http))->exchange))->page($options);
+            self::fail('expected invalid_option');
+        } catch (PreflightError $error) {
+            self::assertSame(PreflightError::class, $error::class);
+            self::assertSame('invalid_option', $error->errorCode);
+            self::assertNull($error->status);
+        }
+        self::assertSame([], $http->requests);
+    }
+
+    public function testTranscriptMapsItsFieldsAndSelectsTranslationsWithAnOriginalFallback(): void
+    {
+        $body = PipelineHarness::transcriptBody('tr_shape');
+        $body['title'] = 'Distinct title';
+        $body['language_detected'] = 'en';
+        $body['duration_seconds'] = 57;
+        $body['auto_delete_at'] = 1760000500;
+        $body['tags'] = ['first', 'second'];
+        $body['edited'] = true;
+        self::assertIsArray($body['body']);
+        $body['body']['translations'] = [
+            'es' => ['utterances' => [['speaker' => 'B', 'start_ms' => 1100, 'end_ms' => 2200, 'text' => 'hola']]],
+            'cleaned' => ['utterances' => [['speaker' => 'A', 'start_ms' => 300, 'end_ms' => 900, 'text' => 'Hello cleaned']]],
+            'fr' => ['utterances' => [['speaker' => '', 'start_ms' => 2300, 'end_ms' => 3400, 'text' => 'bonjour']]],
+        ];
+        $http = new FakeHttp([FakeHttp::json(200, $body)]);
+        $transcript = (new Transcripts((new Rig($http))->exchange))->get('tr_shape');
+
+        self::assertSame('tr_shape', $transcript->id);
+        self::assertSame('Distinct title', $transcript->title);
+        self::assertSame('en', $transcript->language);
+        self::assertSame(57, $transcript->durationSeconds);
+        self::assertSame(1760000000, $transcript->createdAt->getTimestamp());
+        self::assertSame(1760000100, $transcript->updatedAt->getTimestamp());
+        self::assertSame(1760000500, $transcript->autoDeleteAt?->getTimestamp());
+        self::assertSame(['first', 'second'], $transcript->tags);
+        self::assertTrue($transcript->edited);
+        self::assertSame(['A' => 'Dana'], $transcript->speakers);
+        self::assertSame(['es', 'fr'], $transcript->languages);
+        self::assertNotNull($transcript->cleaned);
+        self::assertSame('Hello cleaned', $transcript->cleaned[0]->text);
+        self::assertSame('A', $transcript->cleaned[0]->speaker);
+        self::assertSame('Dana', $transcript->cleaned[0]->speakerName);
+        self::assertSame(300, $transcript->cleaned[0]->startMs);
+        self::assertSame(900, $transcript->cleaned[0]->endMs);
+        self::assertSame('A', $transcript->utterances[0]->speaker);
+        self::assertSame('Dana', $transcript->utterances[0]->speakerName);
+        self::assertSame(0, $transcript->utterances[0]->startMs);
+        self::assertSame(1000, $transcript->utterances[0]->endMs);
+        self::assertSame('hello', $transcript->utterances[0]->text);
+        self::assertSame($transcript->cleaned, $transcript->utterancesFor('cleaned'));
+        self::assertSame('hola', $transcript->utterancesFor('es')[0]->text);
+        self::assertSame('B', $transcript->utterancesFor('es')[0]->speaker);
+        self::assertSame('Speaker B', $transcript->utterancesFor('es')[0]->speakerName);
+        self::assertSame(1100, $transcript->utterancesFor('es')[0]->startMs);
+        self::assertSame(2200, $transcript->utterancesFor('es')[0]->endMs);
+        self::assertSame('bonjour', $transcript->utterancesFor('fr')[0]->text);
+        self::assertSame($transcript->utterances, $transcript->utterancesFor('missing'));
+        self::assertSame($transcript->utterances, $transcript->utterancesFor(''));
+        self::assertSame($transcript->utterances, $transcript->utterancesFor());
+        self::assertSame('Dana: hello', $transcript->text());
+        self::assertSame($transcript->toText(), $transcript->text());
+        self::assertSame($body, $transcript->toJson());
+    }
+
+    #[DataProvider('badIds')]
+    public function testJobsGetAndWaitRefuseBadIdsBeforeAnyRequest(string $id): void
+    {
+        foreach (['get', 'wait'] as $method) {
+            $harness = new PipelineHarness();
+            $http = new FakeHttp();
+            $jobs = new Jobs((new Rig($http))->exchange, $harness->pipeline);
+            try {
+                if ($method === 'get') {
+                    $jobs->get($id);
+                } else {
+                    $jobs->wait($id);
+                }
+                self::fail('expected invalid_option');
+            } catch (PreflightError $error) {
+                self::assertSame(PreflightError::class, $error::class);
+                self::assertSame('invalid_option', $error->errorCode);
+                self::assertNull($error->status);
+            }
+            self::assertSame([], $http->requests);
+            self::assertSame([], $harness->api->requests);
+        }
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function jobOptionFlags(): iterable
+    {
+        yield 'speakers' => ['speaker_detection', 'speakerDetection'];
+        yield 'medical' => ['medical_mode', 'medicalMode'];
+        yield 'multichannel' => ['multichannel', 'multichannel'];
+        yield 'keyterms' => ['keyterms', 'keyterms'];
+        yield 'prompt' => ['prompt', 'prompt'];
+        yield 'auto insights' => ['auto_generate_insights', 'autoGenerateInsights'];
+    }
+
+    #[DataProvider('jobOptionFlags')]
+    public function testEveryJobOptionFlagReadsItsOwnWireKey(string $wire, string $property): void
+    {
+        $flags = ['speaker_detection' => false, 'medical_mode' => false, 'multichannel' => false, 'keyterms' => false, 'prompt' => false, 'auto_generate_insights' => false];
+        $flags[$wire] = true;
+        $http = new FakeHttp([FakeHttp::json(200, PipelineHarness::jobBody('queued', ['options' => [...$flags, 'language_code' => null, 'translation_targets' => []]]))]);
+        $job = (new Jobs((new Rig($http))->exchange, (new PipelineHarness())->pipeline))->get('job_1');
+        foreach (self::jobOptionFlags() as [$key, $name]) {
+            $actual = match ($name) {
+                'speakerDetection' => $job->options->speakerDetection,
+                'medicalMode' => $job->options->medicalMode,
+                'multichannel' => $job->options->multichannel,
+                'keyterms' => $job->options->keyterms,
+                'prompt' => $job->options->prompt,
+                'autoGenerateInsights' => $job->options->autoGenerateInsights,
+                default => self::fail('unknown job option '.$name),
+            };
+            self::assertSame($name === $property, $actual, $key);
+        }
+    }
+
 }

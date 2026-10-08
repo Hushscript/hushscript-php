@@ -43,6 +43,22 @@ final class RetryPolicyTest extends TestCase
         self::assertSame(0.5, $decision->delay);
     }
 
+    public function testFullJitterSamplesTheWholeRange(): void
+    {
+        foreach ([0.5, 8.0] as $ceiling) {
+            $samples = [];
+            for ($index = 0; $index < 128; $index++) {
+                $samples[] = RetryPolicy::fullJitter($ceiling);
+            }
+            self::assertNotEmpty($samples);
+            self::assertGreaterThanOrEqual(0.0, min($samples));
+            self::assertLessThanOrEqual($ceiling, max($samples));
+            self::assertLessThan($ceiling / 4, min($samples));
+            self::assertGreaterThan($ceiling * 3 / 4, max($samples));
+            self::assertGreaterThan(1, count(array_unique($samples)));
+        }
+    }
+
     public function testASuccessIsNeverRetried(): void
     {
         self::assertFalse(RetryPolicy::decide(RetryClass::Safe, 0, 3, new Outcome(200), self::jitter())->retry);

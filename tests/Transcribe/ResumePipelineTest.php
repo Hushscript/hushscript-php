@@ -98,9 +98,15 @@ final class ResumePipelineTest extends TestCase
         $other['job_id'] = 'job_other';
         $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, $other));
 
-        $error = self::failure($harness, self::token($harness), $harness->path());
-
-        self::assertSame('resume_job_missing', $error->errorCode);
+        try {
+            $harness->pipeline->resume(self::token($harness), $harness->path(), []);
+            self::fail('expected a resume mismatch');
+        } catch (HushscriptException $error) {
+            self::assertSame('resume_job_missing', $error->errorCode);
+            self::assertSame(ResumeMismatchError::class, $error::class);
+            self::assertNull($error->status);
+        }
+        self::assertSame(['GET /v1/jobs/job_1', 'POST /v1/uploads'], $harness->api->lines());
         self::assertSame([], $harness->parts->sent, 'nothing is uploaded to the other job');
     }
 
@@ -173,6 +179,9 @@ final class ResumePipelineTest extends TestCase
             $harness->pipeline->resume('not a token', null, []);
             self::fail('expected a configuration error');
         } catch (HushscriptException $error) {
+            self::assertSame(\Hushscript\Exception\ConfigurationError::class, $error::class);
+            self::assertSame('config_invalid', $error->errorCode);
+            self::assertNull($error->status);
             self::assertSame([], $harness->api->requests);
         }
     }

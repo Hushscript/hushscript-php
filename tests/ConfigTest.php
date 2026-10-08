@@ -7,6 +7,7 @@ namespace Hushscript\Tests;
 use Hushscript\Client;
 use Hushscript\Config;
 use Hushscript\Exception\ConfigurationError;
+use Hushscript\Exception\HushscriptException;
 use Hushscript\SystemClock;
 use Hushscript\Tests\Support\FakeClock;
 use Hushscript\Tests\Support\FakeHttp;
@@ -96,10 +97,33 @@ final class ConfigTest extends TestCase
         }
     }
 
-    public function testAnEmptyExplicitTokenFallsBackToTheEnvironmentThenFails(): void
+    /** @return iterable<string, array{string}> */
+    public static function missingTokens(): iterable
     {
-        $this->expectException(ConfigurationError::class);
-        Config::resolve('', [], []);
+        yield 'empty' => [''];
+        yield 'whitespace only' => ['   '];
+    }
+
+    #[DataProvider('missingTokens')]
+    public function testAnEmptyOrBlankTokenWithoutTheEnvironmentFailsBeforeAnyRequest(string $token): void
+    {
+        $previous = getenv('HUSHSCRIPT_TOKEN');
+        putenv('HUSHSCRIPT_TOKEN');
+        $http = new FakeHttp();
+        try {
+            try {
+                new Client($token, ['http_client' => $http]);
+                self::fail('expected ConfigurationError');
+            } catch (HushscriptException $error) {
+                self::assertSame(ConfigurationError::class, $error::class);
+                self::assertSame('config_invalid', $error->errorCode);
+                self::assertNull($error->status);
+                self::assertSame(Config::SETUP_HINT, $error->hint);
+            }
+            self::assertSame(0, $http->count());
+        } finally {
+            putenv($previous === false ? 'HUSHSCRIPT_TOKEN' : 'HUSHSCRIPT_TOKEN='.$previous);
+        }
     }
 
     /** @return iterable<string, array{string}> */
@@ -116,11 +140,16 @@ final class ConfigTest extends TestCase
     #[DataProvider('badTokens')]
     public function testABadTokenIsRejectedWithoutEchoingIt(string $token): void
     {
+        $http = new FakeHttp();
         try {
-            Config::resolve($token, [], []);
+            new Client($token, ['http_client' => $http]);
             self::fail('expected a ConfigurationError');
-        } catch (ConfigurationError $error) {
+        } catch (HushscriptException $error) {
             self::assertNull($error->hint);
+            self::assertSame(ConfigurationError::class, $error::class);
+            self::assertSame('config_invalid', $error->errorCode);
+            self::assertNull($error->status);
+            self::assertSame(0, $http->count());
             self::assertStringNotContainsString(trim($token), $error->getMessage());
             self::assertStringNotContainsString('pat.', $error->getMessage());
         }
@@ -129,6 +158,7 @@ final class ConfigTest extends TestCase
     /** @return iterable<string, array{mixed}> */
     public static function badBaseUrls(): iterable
     {
+        yield 'empty' => [''];
         yield 'plain http to a real host' => ['http://api.hushscript.com'];
         yield 'a path' => ['https://api.hushscript.com/v1'];
         yield 'a query' => ['https://api.hushscript.com?x=1'];
@@ -143,8 +173,17 @@ final class ConfigTest extends TestCase
     #[DataProvider('badBaseUrls')]
     public function testABadBaseUrlIsRejected(mixed $baseUrl): void
     {
-        $this->expectException(ConfigurationError::class);
-        Config::resolve(Tokens::TEST, ['base_url' => $baseUrl], []);
+        $http = new FakeHttp();
+        try {
+            new Client(Tokens::TEST, ['base_url' => $baseUrl, 'http_client' => $http]);
+            self::fail('expected ConfigurationError');
+        } catch (HushscriptException $error) {
+            self::assertSame(ConfigurationError::class, $error::class);
+            self::assertSame('config_invalid', $error->errorCode);
+            self::assertNull($error->status);
+            self::assertNull($error->hint);
+        }
+        self::assertSame(0, $http->count());
     }
 
     /** @return iterable<string, array{string, string}> */
@@ -183,12 +222,17 @@ final class ConfigTest extends TestCase
     #[DataProvider('badOptions')]
     public function testABadOptionIsRejected(array $options): void
     {
+        $http = new FakeHttp();
         try {
-            Config::resolve(Tokens::TEST, $options, []);
-            self::fail('expected a ConfigurationError');
-        } catch (ConfigurationError $error) {
+            new Client(Tokens::TEST, $options + ['http_client' => $http]);
+            self::fail('expected ConfigurationError');
+        } catch (HushscriptException $error) {
+            self::assertSame(ConfigurationError::class, $error::class);
+            self::assertSame('config_invalid', $error->errorCode);
+            self::assertNull($error->status);
             self::assertNull($error->hint);
         }
+        self::assertSame(0, $http->count());
     }
 
     public function testABadLogLevelInTheEnvironmentIsRejected(): void

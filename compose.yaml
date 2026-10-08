@@ -67,7 +67,7 @@ services:
         timeout 1800 phpunit --coverage-clover /tmp/clover.xml
         && php scripts/check-coverage.php /tmp/clover.xml 90
 
-  # Infection on the HTTP core (nightly).
+  # Infection on the HTTP core and transcribe pipeline (nightly).
   mutation:
     <<: *sandboxed
     volumes:
@@ -91,7 +91,7 @@ services:
   conformance:
     <<: *sandboxed
     environment:
-      CONFORMANCE_STRICT: ${CONFORMANCE_STRICT:-0}
+      CONFORMANCE_STRICT: ${CONFORMANCE_STRICT:-1}
     command: ["timeout", "1800", "php", "conformance/run.php"]
 
   examples:
