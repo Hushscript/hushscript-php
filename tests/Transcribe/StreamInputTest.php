@@ -59,7 +59,7 @@ final class StreamInputTest extends TestCase
      */
     private function pipe(string $path)
     {
-        $handle = popen('cat '.escapeshellarg($path), 'r');
+        $handle = popen('cat '.escapeshellarg($path).' 2>/dev/null', 'r');
         self::assertNotFalse($handle);
         self::assertFalse(stream_get_meta_data($handle)['seekable']);
         $this->open[] = $handle;

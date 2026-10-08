@@ -54,10 +54,21 @@ final class LogTest extends TestCase
 
     public function testTheDefaultSinkWritesToStandardError(): void
     {
-        $log = new Log('debug');
-        $this->expectNotToPerformAssertions();
+        // In a child process: the test runner's own standard error must stay clean (Infection stops on any output there).
+        $script = 'require $argv[1]; (new Hushscript\\Log("debug"))->attempt("GET", "/v1/account", 200, 1, 1.0, null);';
+        $process = proc_open(
+            [PHP_BINARY, '-r', $script, dirname(__DIR__).'/vendor/autoload.php'],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+        );
+        self::assertIsResource($process);
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
 
-        // php://stderr is opened per line; PHPUnit's own output buffering does not see it.
-        $log->attempt('GET', '/v1/account', 200, 1, 1.0, null);
+        self::assertSame(0, proc_close($process));
+        self::assertSame('', $stdout);
+        self::assertSame("hushscript GET /v1/account 200 attempt=1 1ms\n", $stderr);
     }
 }
