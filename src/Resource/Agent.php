@@ -189,11 +189,12 @@ final class Agent
 
             return $use(Body::of($fields, 'response'), $seen);
         } catch (\Throwable $failure) {
-            $cause = $failure instanceof BadBody ? Exchange::badResponse($status) : new \RuntimeException($credentials->scrub($failure::class.': '.$failure->getMessage()));
+            $summary = $failure instanceof BadBody ? null : Exchange::summary($failure, $credentials);
+            $cause = $summary === null ? Exchange::badResponse($status) : new \RuntimeException($summary);
         }
 
         throw new OutcomeUnknownError(
-            $credentials->scrub('The answer to '.($route === Routes::CLAIM ? 'the claim' : 'the rotation').' could not be used, so the token may be lost.'),
+            $credentials->scrub('The answer to '.($route === Routes::CLAIM ? 'the claim' : 'the rotation').' could not be used, so the token may be lost.'.($summary === null ? '' : ' '.$summary)),
             hint: Routes::UNKNOWN_HINTS[$route] ?? '',
             previous: $cause,
             receivedToken: $seen,

@@ -858,7 +858,11 @@ final class PipelineTest extends TestCase
         $error = self::failure($harness, NetworkError::class);
 
         self::assertCount(4, $harness->parts->sent);
-        self::assertStringContainsString('PUT /v1/uploads/job_1/parts/1', $error->getMessage());
+        self::assertSame('Could not reach the Hushscript API: PUT /v1/uploads/job_1/parts/1. '.\RuntimeException::class, $error->getMessage());
+        $cause = $error->getPrevious();
+        self::assertNotNull($cause);
+        self::assertSame(\RuntimeException::class, $cause::class);
+        self::assertSame(\RuntimeException::class, $cause->getMessage());
     }
 
     public function testARateLimitedProxiedPartWithALongRetryAfterRaisesAtOnce(): void

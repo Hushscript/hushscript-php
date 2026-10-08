@@ -408,9 +408,11 @@ final class Uploader
             return ErrorMapper::fromResponse($answer, $this->credentials, 'PUT', $path);
         }
 
+        $summary = $this->credentials->scrub($answer instanceof PartFailure ? $answer->getMessage() : 'no answer');
+
         return new NetworkError(
-            'Could not reach the Hushscript API: PUT '.$path.'.',
-            previous: new \RuntimeException($this->credentials->scrub($answer instanceof PartFailure ? $answer->getMessage() : 'no answer')),
+            'Could not reach the Hushscript API: PUT '.$path.'. '.$summary,
+            previous: new \RuntimeException($summary),
         );
     }
 

@@ -15,6 +15,8 @@ use Hushscript\Exception\OutcomeUnknownError;
 use Hushscript\Log;
 use Hushscript\Version;
 use Psr\Http\Client\ClientInterface;
+use Psr\Http\Client\NetworkExceptionInterface;
+use Psr\Http\Client\RequestExceptionInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -111,12 +113,23 @@ final class RetryMiddleware implements ClientInterface
             $started = $this->clock->now();
             $response = null;
             $summary = '';
+            $answered = false;
             try {
-                $response = $this->attemptOnce($request, $onBase, $class);
+                $response = $this->attemptOnce($request, $onBase, $class, $answered);
                 $outcome = $this->outcomeOf($response, $class);
             } catch (\Throwable $failure) {
+                $transport = $failure instanceof NetworkExceptionInterface || $failure instanceof RequestExceptionInterface;
+                // An answer that came back but cannot be read, on a route whose answer cannot be had again, stays an
+                // unknown outcome (spec 7.4): the request was sent, and its hint says what to check.
+                if (! $transport && ! ($answered && $class === RetryClass::Never)) {
+                    // Not a transport failure (R86): a bug or misuse in the caller's client, so it is neither retried nor
+                    // called a network error.
+                    $this->log->attempt($method, $label, null, $attempt + 1, ($this->clock->now() - $started) * 1000, null);
+
+                    throw Exchange::wrapUnexpected($failure, $this->credentials);
+                }
                 // Strings only: the exception holds the request, which carries the Authorization header.
-                $summary = $this->credentials->scrub($failure::class.': '.$failure->getMessage());
+                $summary = Exchange::summary($failure, $this->credentials);
                 $outcome = new Outcome(failed: true, notSent: self::provablyNotSent($failure));
             }
             $kind = RetryPolicy::createLimitKind($class, $outcome);
@@ -149,7 +162,7 @@ final class RetryMiddleware implements ClientInterface
         $this->ticker === null ? $this->clock->sleep($seconds) : $this->ticker->sleep($this->clock, $seconds);
     }
 
-    private function attemptOnce(#[\SensitiveParameter] RequestInterface $request, bool $onBase, RetryClass $class): ResponseInterface
+    private function attemptOnce(#[\SensitiveParameter] RequestInterface $request, bool $onBase, RetryClass $class, bool &$answered): ResponseInterface
     {
         $outgoing = $request->withHeader('User-Agent', 'hushscript-php/'.Version::SDK.' php/'.PHP_VERSION);
         // Read per attempt, after any sleep: a rotation applies to retries already queued (spec 7.4).
@@ -163,6 +176,7 @@ final class RetryMiddleware implements ClientInterface
             $body->rewind();
         }
         $response = $this->transmit($outgoing, $class);
+        $answered = true;
         // Read inside the attempt: a body that fails midway is a failed attempt. The bytes go back
         // into a seekable stream, so a body that cannot be rewound still reaches the caller whole.
         $stream = $response->getBody();
@@ -235,14 +249,14 @@ final class RetryMiddleware implements ClientInterface
         $where = "{$method} {$label}";
         if ($class === RetryClass::Never && ! $notSent) {
             return new OutcomeUnknownError(
-                "No response arrived for {$where}.",
+                "No response arrived for {$where}. {$summary}",
                 'outcome_unknown',
                 hint: Routes::UNKNOWN_HINTS[$route ?? ''] ?? '',
                 previous: $cause,
             );
         }
 
-        return new NetworkError("Could not reach the Hushscript API: {$where}.", previous: $cause);
+        return new NetworkError("Could not reach the Hushscript API: {$where}. {$summary}", previous: $cause);
     }
 
     /**

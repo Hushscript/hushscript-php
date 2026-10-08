@@ -21,6 +21,7 @@ use Hushscript\Tests\Support\FakeHttp;
 use Hushscript\Tests\Support\Rig;
 use Hushscript\Tests\Support\Tokens;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\DataProviderExternal;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\RequestInterface;
 
@@ -541,18 +542,32 @@ final class BillingTest extends TestCase
         self::assertSame(2, $http->count());
     }
 
-    public function testAnythingTheHttpClientThrowsReachesTheCallerAsAnSdkErrorWithTheKey(): void
+    #[DataProviderExternal(RetryMiddlewareTest::class, 'unexpectedFailures')]
+    public function testNonTransportHttpFailuresAreUnexpectedAndKeepThePurchaseKey(\Throwable $failure): void
     {
-        $http = new FakeHttp([self::cards('pm_1', [self::card('pm_1', true)]), new \TypeError('boom '.Tokens::TEST)]);
+        $http = new FakeHttp([self::cards('pm_1', [self::card('pm_1', true)]), $failure, self::bought()]);
 
         try {
-            self::billing($http)->buy('300min');
-            self::fail('expected an SDK error');
+            self::billing($http)->buy('300min', false, 'purchase_key');
+            self::fail('expected unexpected_error');
         } catch (HushscriptException $error) {
-            self::assertNotNull($error->idempotencyKey);
+            $summary = $failure::class.': boom hsr…[redacted]';
+            self::assertSame(HushscriptException::class, $error::class);
+            self::assertSame('unexpected_error', $error->errorCode);
+            self::assertNull($error->status);
+            self::assertNull($error->numericCode);
+            self::assertSame('The SDK failed after the request was sent. '.$summary, $error->getMessage());
+            self::assertSame('purchase_key', $error->idempotencyKey);
             self::assertSame(self::sent($http->requests[1])['idempotency_key'], $error->idempotencyKey);
-            self::assertStringNotContainsString(Tokens::TEST, print_r($error, true).$error->getMessage().(string) $error->getPrevious()?->getMessage());
+            $cause = $error->getPrevious();
+            self::assertNotNull($cause);
+            self::assertSame(\RuntimeException::class, $cause::class);
+            self::assertSame($summary, $cause->getMessage());
+            self::assertNull($cause->getPrevious());
+            self::assertStringNotContainsString(Tokens::TEST, print_r($error, true));
         }
+        self::assertCount(1, self::to($http, '/v1/billing/purchase'));
+        self::assertSame(2, $http->count());
     }
 
     public function testTheClientBuyIsTheBillingBuy(): void

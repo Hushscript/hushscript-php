@@ -178,10 +178,12 @@ final class Exchange
     /** A failure of the SDK's own after a claim, rotation or signup went out: as lost as an answer that never came. */
     private function lost(string $route, #[\SensitiveParameter] \Throwable $failure): OutcomeUnknownError
     {
+        $summary = self::summary($failure, $this->credentials);
+
         return new OutcomeUnknownError(
-            'The answer could not be used, so its outcome is unknown.',
+            'The answer could not be used, so its outcome is unknown. '.$summary,
             hint: Routes::UNKNOWN_HINTS[$route] ?? '',
-            previous: new \RuntimeException($this->credentials->scrub($failure::class.': '.$failure->getMessage())),
+            previous: new \RuntimeException($summary),
         );
     }
 
@@ -193,11 +195,19 @@ final class Exchange
 
     public static function wrapUnexpected(#[\SensitiveParameter] \Throwable $failure, Credentials $credentials): HushscriptException
     {
+        $summary = self::summary($failure, $credentials);
+
         return new HushscriptException(
-            'The SDK failed after the request was sent.',
+            'The SDK failed after the request was sent. '.$summary,
             'unexpected_error',
-            previous: new \RuntimeException($credentials->scrub($failure::class.': '.$failure->getMessage())),
+            previous: new \RuntimeException($summary),
         );
+    }
+
+    /** The original error as text: its class and its message, with every token the client knows scrubbed. */
+    public static function summary(#[\SensitiveParameter] \Throwable $failure, Credentials $credentials): string
+    {
+        return $credentials->scrub($failure::class.': '.$failure->getMessage());
     }
 
     public static function badResponse(int $status): ApiError

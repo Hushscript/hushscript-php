@@ -925,6 +925,8 @@ final class AgentTest extends TestCase
             self::fail('expected OutcomeUnknownError');
         } catch (OutcomeUnknownError $error) {
             self::assertSame(self::CLAIM_HINT, $error->hint);
+            self::assertSame('No response arrived for POST /v1/agent/accounts/sg_1/claim. RuntimeException: read failed hsr…[redacted]', $error->getMessage());
+            self::assertSame('RuntimeException: read failed hsr…[redacted]', $error->getPrevious()?->getMessage());
             self::assertStringNotContainsString(Tokens::TEST, self::surface($error));
         }
         self::assertSame(1, $http->count());
@@ -943,8 +945,33 @@ final class AgentTest extends TestCase
                 self::fail('expected OutcomeUnknownError');
             } catch (OutcomeUnknownError $error) {
                 self::assertSame($hint, $error->hint);
+                self::assertSame('The answer could not be used, so its outcome is unknown. RuntimeException: read failed hsr…[redacted]', $error->getMessage());
+                self::assertSame('RuntimeException: read failed hsr…[redacted]', $error->getPrevious()?->getMessage());
                 self::assertStringNotContainsString(Tokens::TEST, self::surface($error));
             }
+        }
+    }
+
+    public function testAFailureOfTheSdksOwnWhileReadingAMintedAnswerNamesTheOriginalType(): void
+    {
+        $http = new FakeHttp([FakeHttp::json(200, self::claimed())]);
+        $credentials = new Credentials(Tokens::TEST);
+        $exchange = new Exchange($http, $credentials, Rig::BASE);
+        $minted = new \ReflectionMethod(Agent::class, 'minted');
+
+        try {
+            $minted->invoke(null, $exchange, $credentials, '/v1/agent/accounts/sg_1/claim', null, \Hushscript\Http\Routes::CLAIM, static function (): never {
+                throw new \TypeError('boom '.Tokens::TEST);
+            });
+            self::fail('expected OutcomeUnknownError');
+        } catch (OutcomeUnknownError $error) {
+            self::assertSame('The answer to the claim could not be used, so the token may be lost. TypeError: boom hsr…[redacted]', $error->getMessage());
+            self::assertSame(self::CLAIM_HINT, $error->hint);
+            $cause = $error->getPrevious();
+            self::assertNotNull($cause);
+            self::assertSame(\RuntimeException::class, $cause::class);
+            self::assertSame('TypeError: boom hsr…[redacted]', $cause->getMessage());
+            self::assertStringNotContainsString(Tokens::TEST, self::surface($error));
         }
     }
 

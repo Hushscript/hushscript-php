@@ -165,6 +165,49 @@ final class ApiTest extends TestCase
         self::assertSame(1, $http->count());
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProviderExternal(RetryMiddlewareTest::class, 'unexpectedFailures')]
+    public function testUnexpectedWrapperNamesTheOriginalTypeAndRedactsBothMessages(\Throwable $failure): void
+    {
+        $error = \Hushscript\Http\Exchange::wrapUnexpected($failure, new \Hushscript\Credentials(\Hushscript\Tests\Support\Tokens::TEST));
+        $summary = $failure::class.': boom hsr…[redacted]';
+
+        self::assertSame(\Hushscript\Exception\HushscriptException::class, $error::class);
+        self::assertSame('unexpected_error', $error->errorCode);
+        self::assertNull($error->status);
+        self::assertNull($error->numericCode);
+        self::assertSame('The SDK failed after the request was sent. '.$summary, $error->getMessage());
+        $cause = $error->getPrevious();
+        self::assertNotNull($cause);
+        self::assertSame(\RuntimeException::class, $cause::class);
+        self::assertSame($summary, $cause->getMessage());
+        self::assertNull($cause->getPrevious());
+        self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, print_r($error, true));
+    }
+
+    public function testAnUnusableNeverRouteAnswerNamesTheOriginalFailure(): void
+    {
+        $broken = $this->createMock(\Psr\Http\Message\ResponseInterface::class);
+        $broken->method('getStatusCode')->willThrowException(new \TypeError('boom '.\Hushscript\Tests\Support\Tokens::TEST));
+        $exchange = new \Hushscript\Http\Exchange(new FakeHttp([$broken]), new \Hushscript\Credentials(\Hushscript\Tests\Support\Tokens::TEST), Rig::BASE);
+
+        try {
+            $exchange->request('POST', '/v1/agent/accounts/sg_1/claim');
+            self::fail('expected outcome_unknown');
+        } catch (\Hushscript\Exception\HushscriptException $error) {
+            self::assertSame(\Hushscript\Exception\OutcomeUnknownError::class, $error::class);
+            self::assertSame('outcome_unknown', $error->errorCode);
+            self::assertNull($error->status);
+            self::assertNull($error->numericCode);
+            self::assertSame('The answer could not be used, so its outcome is unknown. TypeError: boom hsr…[redacted]', $error->getMessage());
+            $cause = $error->getPrevious();
+            self::assertNotNull($cause);
+            self::assertSame(\RuntimeException::class, $cause::class);
+            self::assertSame('TypeError: boom hsr…[redacted]', $cause->getMessage());
+            self::assertNull($cause->getPrevious());
+            self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, print_r($error, true));
+        }
+    }
+
     public function testTheInternalCollaboratorIsNotReachableThroughTheLowLevelApi(): void
     {
         $methods = array_map(static fn (\ReflectionMethod $method): string => $method->getName(), (new \ReflectionClass(\Hushscript\Api::class))->getMethods(\ReflectionMethod::IS_PUBLIC));

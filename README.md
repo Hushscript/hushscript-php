@@ -300,7 +300,9 @@ An error raised after an upload started, or after a purchase was sent, carries `
 once the job exists it carries `resumeToken` too. Pass the token to `$hs->resume($token, $file)` to
 carry on without a second charge. After the request was sent, every failure reaches you as one of
 these classes: a failure of the SDK's own is `HushscriptException` with the code `unexpected_error`
-and a redacted cause. An exception thrown by your own `on_progress` or `on_resume_token` callback
+and a redacted cause. A PSR-18 client that throws `NetworkExceptionInterface` or `RequestExceptionInterface`
+is a `NetworkError` (retried per the table); any other exception it throws is `unexpected_error`, never
+retried. Both messages name the original class and its redacted message. An exception thrown by your own `on_progress` or `on_resume_token` callback
 comes back unchanged.
 
 ### Hints and the methods they mean
