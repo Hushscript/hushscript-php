@@ -12,6 +12,8 @@ use Hushscript\Http\Body;
  */
 final readonly class JobOptions
 {
+    use RawBody;
+
     /**
      * @param  ?string  $languageCode  the forced language, or null when it was auto-detected
      * @param  list<string>  $translationTargets
@@ -26,6 +28,8 @@ final readonly class JobOptions
         public bool $keyterms,
         public bool $prompt,
         public ?bool $autoGenerateInsights,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
@@ -41,6 +45,7 @@ final readonly class JobOptions
             $options->bool('keyterms'),
             $options->bool('prompt'),
             $options->nullableBool('auto_generate_insights'),
+            $options->raw(),
         );
     }
 }

@@ -9,6 +9,8 @@ use Hushscript\Http\Body;
 /** A saved payment method. */
 final readonly class Card
 {
+    use RawBody;
+
     /**
      * @param  int  $expMonth  0 when the method has no expiry, as `expYear`
      * @param  bool  $fastCheckoutEligible  whether `buy()` may charge it without the buyer present
@@ -23,6 +25,8 @@ final readonly class Card
         public ?string $email,
         public bool $isDefault,
         public bool $fastCheckoutEligible,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
@@ -39,6 +43,7 @@ final readonly class Card
             $card->nullableString('email'),
             $card->bool('is_default'),
             $card->bool('fast_checkout_eligible'),
+            $card->raw(),
         );
     }
 }

@@ -80,6 +80,31 @@ final class ResourcesTest extends TestCase
         self::assertSame(2, $info->purchasesRemainingInWindow);
     }
 
+    public function testAnUnknownKeyNestedInAnAccountResponseStaysReachable(): void
+    {
+        $limits = ['max_daily_seconds' => 108000, 'max_active_jobs' => 3, 'active_jobs' => 1, 'used_today_seconds' => 60, 'future_limit' => ['burst' => [1, null]]];
+        $http = new FakeHttp([FakeHttp::json(200, [
+            'balance_seconds' => 600, 'held_seconds' => 71, 'credits_expire_at' => null, 'purchases_remaining_in_window' => 2, 'card_on_file' => true, 'data_region' => 'eu',
+            'limits' => $limits,
+        ])]);
+
+        $info = (new Account((new Rig($http))->exchange))->account();
+
+        self::assertSame($limits, $info->limits->toJson());
+    }
+
+    public function testAnUnknownKeyNestedInAJobResponseStaysReachable(): void
+    {
+        $options = ['language_code' => null, 'speaker_detection' => true, 'medical_mode' => false, 'multichannel' => false, 'translation_targets' => [], 'keyterms' => false, 'prompt' => false, 'auto_generate_insights' => null, 'future_option' => ['mode' => ['fast', null]]];
+        $body = PipelineHarness::jobBody(changes: ['options' => $options]);
+        $http = new FakeHttp([FakeHttp::json(200, $body)]);
+
+        $job = (new Jobs((new Rig($http))->exchange, (new PipelineHarness())->pipeline))->get('job_1');
+
+        self::assertSame($options, $job->options->toJson());
+        self::assertSame($body, $job->toJson());
+    }
+
     public function testAListWalksEveryPageLazilyAndSendsTheCursor(): void
     {
         $http = new FakeHttp([self::page([self::row(1), self::row(2)], 'c2'), self::page([self::row(3)], 'c3'), self::page([self::row(4)], null)]);

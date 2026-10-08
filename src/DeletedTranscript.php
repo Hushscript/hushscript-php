@@ -9,6 +9,8 @@ use Hushscript\Http\Body;
 /** The record kept after a transcript was removed; its content is gone. */
 final readonly class DeletedTranscript
 {
+    use RawBody;
+
     /**
      * @param  \DateTimeImmutable  $createdAt  when the transcript was uploaded
      * @param  string  $cause  `manual`, `scheduled`, `dormant` or `expired`; a cause the SDK does not know yet passes through
@@ -22,6 +24,8 @@ final readonly class DeletedTranscript
         public \DateTimeImmutable $deletedAt,
         public string $cause,
         public ?array $receipt,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
@@ -36,6 +40,7 @@ final readonly class DeletedTranscript
             $row->timestamp('deleted_at'),
             $row->string('cause'),
             $row->opaque('receipt'),
+            $row->raw(),
         );
     }
 }

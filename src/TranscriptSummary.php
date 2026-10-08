@@ -9,6 +9,8 @@ use Hushscript\Http\Body;
 /** One row of the transcript list. */
 final readonly class TranscriptSummary
 {
+    use RawBody;
+
     /** @param list<string> $tags */
     private function __construct(
         public string $id,
@@ -18,6 +20,8 @@ final readonly class TranscriptSummary
         public \DateTimeImmutable $createdAt,
         public ?\DateTimeImmutable $autoDeleteAt,
         public array $tags,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
@@ -32,6 +36,7 @@ final readonly class TranscriptSummary
             $row->timestamp('created_at'),
             $row->nullableTimestamp('auto_delete_at'),
             $row->strings('tags'),
+            $row->raw(),
         );
     }
 }

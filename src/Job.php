@@ -12,6 +12,8 @@ use Hushscript\Http\Body;
  */
 final readonly class Job
 {
+    use RawBody;
+
     /**
      * @param  string  $state  `uploading`, `fetching`, `queued`, `processing`, `done` or `failed`; a state the SDK does not know yet passes through
      * @param  ?string  $error  the failure text of a failed job; opaque
@@ -31,6 +33,8 @@ final readonly class Job
         public ?string $retryOf,
         public \DateTimeImmutable $createdAt,
         public JobOptions $options,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
@@ -51,6 +55,7 @@ final readonly class Job
             $job->nullableString('retry_of'),
             $job->timestamp('created_at'),
             JobOptions::fromApi($job->child('options')),
+            $job->raw(),
         );
     }
 }
