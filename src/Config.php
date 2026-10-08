@@ -52,7 +52,7 @@ final class Config
      * An explicit option beats its environment variable.
      *
      * @param  array<string, mixed>  $options  base_url, timeout, max_retries, log_level, clock, http_client, part_transport
-     * @param  array<string, string>|null  $env  defaults to the process environment
+     * @param  array<string, string|null>|null  $env  defaults to the process environment
      */
     public static function resolve(#[\SensitiveParameter] ?string $token = null, #[\SensitiveParameter] array $options = [], #[\SensitiveParameter] ?array $env = null): self
     {
@@ -61,7 +61,10 @@ final class Config
                 throw new ConfigurationError('Unknown option "'.Redact::text($name).'".');
             }
         }
-        $resolvedToken = trim($token !== null && $token !== '' ? $token : self::env($env, self::TOKEN_ENV));
+        $resolvedToken = trim($token ?? '');
+        if ($resolvedToken === '') {
+            $resolvedToken = trim(self::env($env, self::TOKEN_ENV));
+        }
         if ($resolvedToken === '') {
             throw new ConfigurationError('No Hushscript token was provided.', hint: self::SETUP_HINT);
         }
@@ -81,7 +84,7 @@ final class Config
      * nor sent, and the options are the ones such a call can use.
      *
      * @param  array<string, mixed>  $options  base_url, timeout, log_level, clock, http_client
-     * @param  array<string, string>|null  $env  defaults to the process environment
+     * @param  array<string, string|null>|null  $env  defaults to the process environment
      */
     public static function tokenless(#[\SensitiveParameter] array $options = [], #[\SensitiveParameter] ?array $env = null): self
     {
@@ -105,7 +108,7 @@ final class Config
 
     /**
      * @param  array<string, mixed>  $options
-     * @param  array<string, string>|null  $env
+     * @param  array<string, string|null>|null  $env
      */
     private static function finish(Credentials $credentials, #[\SensitiveParameter] array $options, #[\SensitiveParameter] ?array $env): self
     {
@@ -118,14 +121,7 @@ final class Config
         if (! is_int($maxRetries) || $maxRetries < 0) {
             throw new ConfigurationError('max_retries must be a non-negative integer.');
         }
-        $level = $options['log_level'] ?? null;
-        if ($level !== null && ! is_string($level)) {
-            throw new ConfigurationError('log_level must be one of '.implode(', ', Log::LEVELS).'.');
-        }
-        if ($level === null) {
-            $fromEnv = self::env($env, self::LOG_ENV);
-            $level = $fromEnv === '' ? 'off' : $fromEnv;
-        }
+        $level = self::unsetToNull($options['log_level'] ?? null) ?? self::unsetToNull(self::env($env, self::LOG_ENV)) ?? 'off';
         if (! in_array($level, Log::LEVELS, true)) {
             throw new ConfigurationError('log_level must be one of '.implode(', ', Log::LEVELS).'.');
         }
@@ -146,8 +142,14 @@ final class Config
         return new self($credentials, $baseUrl, (float) $timeout, $maxRetries, $level, $clock, $httpClient, $partTransport);
     }
 
+    // Null, an empty string and a whitespace-only string all mean "not set" (R85); anything else is kept as given.
+    private static function unsetToNull(#[\SensitiveParameter] mixed $value): mixed
+    {
+        return $value === null || (is_string($value) && trim($value) === '') ? null : $value;
+    }
+
     /**
-     * @param  array<string, string>|null  $env
+     * @param  array<string, string|null>|null  $env
      */
     private static function env(#[\SensitiveParameter] ?array $env, string $name): string
     {
@@ -160,12 +162,11 @@ final class Config
     }
 
     /**
-     * @param  array<string, string>|null  $env
+     * @param  array<string, string|null>|null  $env
      */
     private static function baseUrl(#[\SensitiveParameter] mixed $option, #[\SensitiveParameter] ?array $env): string
     {
-        $fromEnv = self::env($env, self::BASE_URL_ENV);
-        $raw = $option ?? ($fromEnv === '' ? self::DEFAULT_BASE_URL : $fromEnv);
+        $raw = self::unsetToNull($option) ?? self::unsetToNull(self::env($env, self::BASE_URL_ENV)) ?? self::DEFAULT_BASE_URL;
         if (! is_string($raw)) {
             throw new ConfigurationError('base_url must be a string.');
         }

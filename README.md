@@ -361,7 +361,9 @@ ffmpeg -i input -vn -c:a libopus output.opus
 | `clock` | none | `Hushscript\Clock`, for tests |
 | `part_transport` | none | advanced: a `Hushscript\Transcribe\PartTransport` for part uploads |
 
-An explicit option beats its environment variable. The base URL must be `https://`, or `http://` to
+An explicit option beats its environment variable. `null`, an empty string and a whitespace-only string
+(for the token, `base_url` and `log_level`), and an empty or whitespace-only variable, all mean "not set":
+the option, then the variable, then the default. A token still missing raises `ConfigurationError`. The base URL must be `https://`, or `http://` to
 `localhost`, `127.0.0.1` or `[::1]`, with no path.
 
 A custom `http_client` must not follow redirects and must return 4xx and 5xx answers as responses.
