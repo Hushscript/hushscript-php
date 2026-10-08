@@ -344,7 +344,7 @@ final class Uploader
         $this->start($run);
     }
 
-    /** What the last direct PUT of the part came to, as a cause that holds no URL or signature. */
+    /** What the last direct PUT of the part came to, as a cause whose URLs keep host and path but no query (R96). */
     private function directFailure(PartRun $run, #[\SensitiveParameter] ResponseInterface|PartFailure|null $answer): \Throwable
     {
         $where = 'The direct upload of part '.$run->n;

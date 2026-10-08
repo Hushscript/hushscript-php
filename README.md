@@ -376,10 +376,11 @@ ffmpeg -i input -vn -c:a libopus output.opus
 | `clock` | none | `Hushscript\Clock`, for tests |
 | `part_transport` | none | advanced: a `Hushscript\Transcribe\PartTransport` for part uploads |
 
-An explicit option beats its environment variable. `null`, an empty string and a whitespace-only string
-(for the token, `base_url` and `log_level`), and an empty or whitespace-only variable, all mean "not set":
-the option, then the variable, then the default. A token still missing raises `ConfigurationError`. The base URL must be `https://`, or `http://` to
-`localhost`, `127.0.0.1` or `[::1]`, with no path.
+An explicit option beats its environment variable. `null`, an empty string and a whitespace-only
+string (for the token, `base_url` and `log_level`), and an empty or whitespace-only variable, all mean
+"not set": the option, then the variable, then the default. A token still missing raises
+`ConfigurationError`. The base URL must be `https://`, or `http://` to `localhost`, `127.0.0.1` or
+`[::1]`, with no path.
 
 A custom `http_client` must not follow redirects and must return 4xx and 5xx answers as responses.
 The SDK still adds the retry and authorization rules around it, and sends the token only to the
@@ -447,10 +448,10 @@ The SDK sends no telemetry. The only client identification is the `User-Agent` h
 never a header, body, title or transcript text. The client's token never appears in `var_dump`,
 `print_r`, `var_export`, `json_encode`, exception messages or traces, and `serialize()` of the client
 throws. In error messages, hints and causes, any URL keeps its scheme, host and path, but its query
-string becomes `?[redacted]`, and the claim secret is redacted once a claim has used it. Results that
-hand you a secret (the claim secret, a new token) show it as `[redacted]` in `var_dump` and
-`print_r`, but carry it in `toJson()`, `json_encode`, `serialize` and `var_export`, which are your own
-export.
+string becomes `?[redacted]`, and a claim secret of 16 or more characters is redacted once a claim has
+used it. Results that hand you a secret (the claim secret, a new token) show it as `[redacted]` in
+`var_dump` and `print_r`, but carry it in `toJson()`, `json_encode`, `serialize` and `var_export`,
+which are your own export.
 
 ## Server only
 

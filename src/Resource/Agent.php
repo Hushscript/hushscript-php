@@ -41,7 +41,7 @@ final class Agent
     /**
      * Mints a successor token and revokes the one in use. The client sends the new token from then on, to retries
      * already queued as well; store the returned one right away. It is never retried. Apart from an API error
-     * answer, a failure after the request was sent is an `OutcomeUnknownError` whose hint says what to check: a lost
+     * answer, a failure after the request may have gone out is an `OutcomeUnknownError` whose hint says what to check: a lost
      * answer, an answer without a usable token, or a failure of the SDK's own while reading it. The error's
      * `receivedToken()` holds the token the answer carried; the client sends it from then on when it passes the
      * token check and the expiry can be read, and keeps its old token otherwise.
