@@ -307,9 +307,9 @@ have been sent when it does not.
 
 A PSR-18 client that throws `NetworkExceptionInterface` or `RequestExceptionInterface`, or a response
 body that breaks off while it is read, is a transport failure: retried per the table, then a
-`NetworkError`. Any other exception the client throws is `unexpected_error` and is never retried.
-On a claim, rotation or signup, which are never sent twice, any failure after the
-request may have gone out is an `OutcomeUnknownError` whose hint says what to check. Every such
+`NetworkError`. Any other exception the client throws is `unexpected_error` and is never retried,
+part uploads included. On a claim, rotation or signup, which are never sent twice, any failure after
+the request may have gone out is an `OutcomeUnknownError` whose hint says what to check. Every such
 message names the original class and its redacted message, and the cause is a stand-in carrying the
 same text. An exception thrown by your own `on_progress` or `on_resume_token` callback comes back
 unchanged.

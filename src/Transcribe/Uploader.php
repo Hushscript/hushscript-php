@@ -22,7 +22,6 @@ use Hushscript\Http\RetryClass;
 use Hushscript\Http\RetryPolicy;
 use Hushscript\IdleClock;
 use Hushscript\Log;
-use Hushscript\Redact;
 use Hushscript\Secret;
 use Hushscript\Version;
 use Psr\Http\Message\ResponseInterface;
@@ -286,6 +285,10 @@ final class Uploader
 
             return;
         }
+        if ($answer instanceof PartFailure && ! $answer->transport()) {
+            // Not a transport failure (R86): neither retried nor sent another way.
+            throw Exchange::unexpected($this->credentials->scrub($answer->getMessage()), null);
+        }
         if ($decision !== null && $decision->retry) {
             $run->attempt++;
             $run->notBefore = $this->clock->now() + $decision->delay;
@@ -349,7 +352,13 @@ final class Uploader
             return new ApiError($where.' was answered with '.$answer->getStatusCode().'.', 'http_'.$answer->getStatusCode(), status: $answer->getStatusCode());
         }
 
-        return new NetworkError($where.' failed: '.Redact::text($answer instanceof PartFailure ? $answer->getMessage() : 'no answer').'.');
+        if (! $answer instanceof PartFailure) {
+            return new NetworkError($where.' failed: no answer.');
+        }
+        $summary = $this->credentials->scrub($answer->getMessage());
+
+        // No closing period: the redaction of a URL's query would take it as part of the query.
+        return new NetworkError($where.' failed: '.$summary, previous: new \RuntimeException($summary));
     }
 
     /**

@@ -197,7 +197,12 @@ final class Exchange
      */
     public static function wrapUnexpected(#[\SensitiveParameter] \Throwable $failure, Credentials $credentials, ?bool $sent): HushscriptException
     {
-        $summary = self::summary($failure, $credentials);
+        return self::unexpected(self::summary($failure, $credentials), $sent);
+    }
+
+    /** `unexpected_error` for a failure already summarized and scrubbed (see `wrapUnexpected`). */
+    public static function unexpected(string $summary, ?bool $sent): HushscriptException
+    {
         $context = match ($sent) {
             false => 'The SDK failed before the request was sent. ',
             true => 'The SDK failed after the request was sent. ',
