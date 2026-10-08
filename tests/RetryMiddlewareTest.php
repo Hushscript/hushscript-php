@@ -260,6 +260,7 @@ final class RetryMiddlewareTest extends TestCase
                 } catch (HushscriptException $error) {
                     $summary = $failure::class.': boom hsr…[redacted]';
                     self::assertUnexpectedFailure($error, 'The call failed with an error that is not a network failure; the request may have been sent. '.$summary, $summary);
+                    self::assertFalse(\Hushscript\Http\Unsent::has($error));
                 }
                 self::assertSame(1, $http->count());
                 self::assertSame([], $rig->clock->sleeps);
@@ -446,6 +447,7 @@ final class RetryMiddlewareTest extends TestCase
             } catch (HushscriptException $error) {
                 $summary = 'RuntimeException: rewind hsr…[redacted]';
                 self::assertUnexpectedFailure($error, 'The SDK failed before the request was sent. '.$summary, $summary);
+                self::assertTrue(\Hushscript\Http\Unsent::has($error));
             }
             self::assertSame(0, $http->count());
         }
@@ -481,7 +483,10 @@ final class RetryMiddlewareTest extends TestCase
                 self::assertSame('network_error', $error->errorCode);
                 self::assertNull($error->status);
                 self::assertNull($error->numericCode);
-                self::assertSame('Could not reach the Hushscript API: GET /v1/account. '.$summary, $error->getMessage());
+                // errno 7 proves the connection was never made; a bare RequestException proves nothing (R100).
+                $lead = $failure instanceof ConnectException ? 'Could not reach the Hushscript API: GET /v1/account; it failed before the request was sent. ' : 'Could not reach the Hushscript API: GET /v1/account. ';
+                self::assertSame($lead.$summary, $error->getMessage());
+                self::assertSame($failure instanceof ConnectException, \Hushscript\Http\Unsent::has($error));
                 $cause = $error->getPrevious();
                 self::assertNotNull($cause);
                 self::assertSame(\RuntimeException::class, $cause::class);

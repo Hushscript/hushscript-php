@@ -302,7 +302,9 @@ HushscriptException
 └─ OutcomeUnknownError
 ```
 
-An error raised after an upload started, or after a purchase was sent, carries `idempotencyKey`;
+An error raised after an upload started, or once a purchase may have been sent, carries
+`idempotencyKey` (a purchase that failed before its request was sent charged nothing, carries none and
+says so);
 once the job exists it carries `resumeToken` too. Pass the token to `$hs->resume($token, $file)` to
 carry on without a second charge. Every failure reaches you as one of these classes; one that fits
 no other is `HushscriptException` with the code `unexpected_error`, whose message says whether the

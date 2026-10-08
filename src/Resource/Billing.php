@@ -13,6 +13,7 @@ use Hushscript\Hold;
 use Hushscript\Http\BadBody;
 use Hushscript\Http\Body;
 use Hushscript\Http\Exchange;
+use Hushscript\Http\Unsent;
 use Hushscript\LedgerEntry;
 use Hushscript\Pack;
 use Hushscript\Page;
@@ -82,8 +83,8 @@ final class Billing
     /**
      * Buys a pack with the default card, or the only card that can be charged when there is no default, and
      * returns the balance the purchase answer reports. It makes no request after the charge, so nothing can fail
-     * once the money has moved. Every error raised after the purchase request was sent carries `idempotencyKey`:
-     * pass it back to ask again with no chance of a second charge. `$acknowledgeNoRefund` records that the
+     * once the money has moved. Every error raised once the purchase request may have been sent carries `idempotencyKey`:
+     * pass it back to ask again with no chance of a second charge. An error raised before it was sent carries none. `$acknowledgeNoRefund` records that the
      * no-refund notice was shown to the buyer; it is evidence for disputes and never gates the charge.
      *
      * @throws HushscriptException
@@ -100,8 +101,11 @@ final class Billing
         try {
             return $this->exchange->fetch('POST', '/v1/billing/purchase', [], $body, static fn (#[\SensitiveParameter] Body $answer): Purchase => Purchase::fromApi($answer));
         } catch (HushscriptException $failure) {
-            // From the moment the request went out the card may have been charged, so the key rides on every error.
-            $failure->idempotencyKey = $key;
+            // From the moment the request may have gone out the card may have been charged, so the key rides on every
+            // error but one raised before it was sent, which charged nothing (R103).
+            if (! Unsent::has($failure)) {
+                $failure->idempotencyKey = $key;
+            }
             throw $failure;
         }
     }
