@@ -59,7 +59,7 @@ final class UnexpectedFailureTest extends TestCase
             self::assertNotNull($error->getPrevious());
             self::assertStringContainsString('TypeError', $error->getPrevious()->getMessage());
             self::assertStringNotContainsString(Tokens::TEST, $error->getPrevious()->getMessage());
-            self::assertStringNotContainsString($error->resumeToken, print_r($error->getPrevious(), true));
+            self::assertStringNotContainsString($error->resumeToken, print_r(\Hushscript\Tests\Support\SdkFrames::only($error)->getPrevious(), true));
         }
     }
 

@@ -231,17 +231,24 @@ final class RetryMiddlewareTest extends TestCase
         self::assertCount(4, $http->requests);
     }
 
-    /** @return iterable<string, array{\Throwable}> */
+    /**
+     * Factories, not exceptions: a provided value stays in the test case, and with trace arguments kept every SDK
+     * error's trace reaches the test runner and through it every test case's data.
+     *
+     * @return iterable<string, array{\Closure(): \Throwable}>
+     */
     public static function unexpectedFailures(): iterable
     {
-        yield 'type error' => [new \TypeError('boom '.Tokens::TEST)];
-        yield 'runtime error' => [new \RuntimeException('boom '.Tokens::TEST)];
-        yield 'base PSR client error' => [new class ('boom '.Tokens::TEST) extends \RuntimeException implements \Psr\Http\Client\ClientExceptionInterface {}];
+        yield 'type error' => [static fn (): \Throwable => new \TypeError('boom '.Tokens::TEST)];
+        yield 'runtime error' => [static fn (): \Throwable => new \RuntimeException('boom '.Tokens::TEST)];
+        yield 'base PSR client error' => [static fn (): \Throwable => new class ('boom '.Tokens::TEST) extends \RuntimeException implements \Psr\Http\Client\ClientExceptionInterface {}];
     }
 
+    /** @param \Closure(): \Throwable $make */
     #[DataProvider('unexpectedFailures')]
-    public function testAnyNonTransportThrowableStopsWithUnexpectedError(\Throwable $failure): void
+    public function testAnyNonTransportThrowableStopsWithUnexpectedError(\Closure $make): void
     {
+        $failure = $make();
         foreach ([0, 3] as $maxRetries) {
             foreach ([['GET', '/v1/account'], ['POST', '/v1/agent/accounts/sg_1/claim'], ['POST', '/v1/agent/credentials/rotate'], ['POST', '/v1/agent/accounts'], ['POST', '/v1/org/members']] as [$method, $path]) {
                 $http = new FakeHttp([$failure, self::ok()]);
@@ -271,7 +278,7 @@ final class RetryMiddlewareTest extends TestCase
         self::assertSame(\RuntimeException::class, $cause::class);
         self::assertSame($summary, $cause->getMessage());
         self::assertNull($cause->getPrevious());
-        self::assertStringNotContainsString(Tokens::TEST, print_r($error, true));
+        self::assertStringNotContainsString(Tokens::TEST, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true));
     }
 
     public function testAResponseBodyRuntimeFailureIsUnexpectedAndNeverRetried(): void
@@ -312,17 +319,18 @@ final class RetryMiddlewareTest extends TestCase
         self::assertSame([], $rig->clock->sleeps);
     }
 
-    /** @return iterable<string, array{\Throwable}> */
+    /** @return iterable<string, array{\Closure(): \Throwable}> factories, as for unexpectedFailures() */
     public static function transportFailures(): iterable
     {
-        $request = new Request('GET', Rig::BASE.'/v1/account');
-        yield 'PSR network' => [new ConnectException('boom '.Tokens::TEST, $request, null, ['errno' => 7])];
-        yield 'PSR request' => [new RequestException('boom '.Tokens::TEST, $request)];
+        yield 'PSR network' => [static fn (): \Throwable => new ConnectException('boom '.Tokens::TEST, new Request('GET', Rig::BASE.'/v1/account'), null, ['errno' => 7])];
+        yield 'PSR request' => [static fn (): \Throwable => new RequestException('boom '.Tokens::TEST, new Request('GET', Rig::BASE.'/v1/account'))];
     }
 
+    /** @param \Closure(): \Throwable $make */
     #[DataProvider('transportFailures')]
-    public function testPsrTransportFailuresKeepRetriesAndTypedRedactedTerminalMessages(\Throwable $failure): void
+    public function testPsrTransportFailuresKeepRetriesAndTypedRedactedTerminalMessages(\Closure $make): void
     {
+        $failure = $make();
         $http = new FakeHttp([$failure, self::ok()]);
         $rig = new Rig($http);
         self::assertSame(['ok' => true], $rig->api->request('GET', '/v1/account'));
@@ -347,7 +355,7 @@ final class RetryMiddlewareTest extends TestCase
                 self::assertSame(\RuntimeException::class, $cause::class);
                 self::assertSame($summary, $cause->getMessage());
                 self::assertNull($cause->getPrevious());
-                self::assertStringNotContainsString(Tokens::TEST, print_r($error, true));
+                self::assertStringNotContainsString(Tokens::TEST, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true));
             }
             self::assertSame($attempts, $http->count());
         }

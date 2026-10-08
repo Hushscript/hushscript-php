@@ -17,6 +17,7 @@ use Hushscript\Exception\OutcomeUnknownError;
 use Hushscript\Redact;
 use Hushscript\Tests\Support\FakeHttp;
 use Hushscript\Tests\Support\Rig;
+use Hushscript\Tests\Support\SdkFrames;
 use Hushscript\Tests\Support\Tokens;
 use PHPUnit\Framework\TestCase;
 
@@ -27,6 +28,9 @@ final class RedactionTest extends TestCase
     /** @return list<string> every representation PHP can print or encode for a value */
     private static function dumps(mixed $value): array
     {
+        if ($value instanceof \Throwable) {
+            SdkFrames::only($value);
+        }
         ob_start();
         var_dump($value);
         $dump = (string) ob_get_clean();
@@ -164,7 +168,7 @@ final class RedactionTest extends TestCase
             $rig->api->request('GET', '/v1/account');
             self::fail('expected an AuthenticationError');
         } catch (AuthenticationError $error) {
-            self::assertClean(print_r($error, true), 'error');
+            self::assertClean(print_r(SdkFrames::only($error), true), 'error');
         }
     }
 

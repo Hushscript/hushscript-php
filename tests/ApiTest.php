@@ -165,9 +165,11 @@ final class ApiTest extends TestCase
         self::assertSame(1, $http->count());
     }
 
+    /** @param \Closure(): \Throwable $make */
     #[\PHPUnit\Framework\Attributes\DataProviderExternal(RetryMiddlewareTest::class, 'unexpectedFailures')]
-    public function testUnexpectedWrapperNamesTheOriginalTypeAndRedactsBothMessages(\Throwable $failure): void
+    public function testUnexpectedWrapperNamesTheOriginalTypeAndRedactsBothMessages(\Closure $make): void
     {
+        $failure = $make();
         $error = \Hushscript\Http\Exchange::wrapUnexpected($failure, new \Hushscript\Credentials(\Hushscript\Tests\Support\Tokens::TEST));
         $summary = $failure::class.': boom hsr…[redacted]';
 
@@ -181,7 +183,7 @@ final class ApiTest extends TestCase
         self::assertSame(\RuntimeException::class, $cause::class);
         self::assertSame($summary, $cause->getMessage());
         self::assertNull($cause->getPrevious());
-        self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, print_r($error, true));
+        self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true));
     }
 
     public function testAnUnusableNeverRouteAnswerNamesTheOriginalFailure(): void
@@ -204,7 +206,7 @@ final class ApiTest extends TestCase
             self::assertSame(\RuntimeException::class, $cause::class);
             self::assertSame('TypeError: boom hsr…[redacted]', $cause->getMessage());
             self::assertNull($cause->getPrevious());
-            self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, print_r($error, true));
+            self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true));
         }
     }
 

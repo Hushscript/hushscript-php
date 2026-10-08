@@ -221,7 +221,7 @@ final class BodyFuzzTest extends TestCase
                         ? Agent::claim($exchange, $credentials, '/v1/agent/accounts/sg_1/claim', 'cs_0123456789abcdef')
                         : (new Agent($exchange, $credentials))->rotateToken();
                 } catch (OutcomeUnknownError $error) {
-                    self::assertStringNotContainsString($token, print_r($error, true).$error->getMessage(), $text);
+                    self::assertStringNotContainsString($token, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true).$error->getMessage(), $text);
                 }
                 $runs++;
             }

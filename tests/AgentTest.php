@@ -25,6 +25,7 @@ use Hushscript\Resource\Agent;
 use Hushscript\Tests\Support\FakeClock;
 use Hushscript\Tests\Support\FakeHttp;
 use Hushscript\Tests\Support\Rig;
+use Hushscript\Tests\Support\SdkFrames;
 use Hushscript\Tests\Support\Tokens;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -85,6 +86,7 @@ final class AgentTest extends TestCase
 
     private static function surface(\Throwable $error): string
     {
+        SdkFrames::only($error);
         $parts = [];
         for ($link = $error; $link !== null; $link = $link->getPrevious()) {
             $parts[] = $link->getMessage();
@@ -581,7 +583,7 @@ final class AgentTest extends TestCase
         } catch (OutcomeUnknownError $error) {
             self::assertSame(Tokens::ROTATED, $error->receivedToken());
             ob_start();
-            var_dump($error);
+            var_dump(SdkFrames::only($error));
             $dumped = (string) ob_get_clean();
             self::assertStringNotContainsString('bbbbbbbbbbbbbbbb', $dumped.self::surface($error));
         }

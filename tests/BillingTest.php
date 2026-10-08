@@ -542,9 +542,11 @@ final class BillingTest extends TestCase
         self::assertSame(2, $http->count());
     }
 
+    /** @param \Closure(): \Throwable $make */
     #[DataProviderExternal(RetryMiddlewareTest::class, 'unexpectedFailures')]
-    public function testNonTransportHttpFailuresAreUnexpectedAndKeepThePurchaseKey(\Throwable $failure): void
+    public function testNonTransportHttpFailuresAreUnexpectedAndKeepThePurchaseKey(\Closure $make): void
     {
+        $failure = $make();
         $http = new FakeHttp([self::cards('pm_1', [self::card('pm_1', true)]), $failure, self::bought()]);
 
         try {
@@ -564,7 +566,7 @@ final class BillingTest extends TestCase
             self::assertSame(\RuntimeException::class, $cause::class);
             self::assertSame($summary, $cause->getMessage());
             self::assertNull($cause->getPrevious());
-            self::assertStringNotContainsString(Tokens::TEST, print_r($error, true));
+            self::assertStringNotContainsString(Tokens::TEST, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true));
         }
         self::assertCount(1, self::to($http, '/v1/billing/purchase'));
         self::assertSame(2, $http->count());
