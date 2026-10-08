@@ -64,8 +64,12 @@ The list holds finished transcripts only. A recording that is still processing i
 it in `$hs->jobs()->list(['active' => true])`. `$hs->jobs()->wait($jobId)` waits for one, and
 `$hs->transcripts()->get($transcriptId)` returns the full `Transcript` once it is done. Lists are
 generators that fetch pages as you go; `page()` returns one page with its `nextCursor`, and raises
-`pagination_loop` if that equals the cursor you sent (an empty one ends the list). A field the API adds later is kept: `toJson()` on
-a transcript, a job and its options, the account limits and each list item returns the object as received.
+`pagination_loop` if that equals the cursor you sent (an empty one ends the list).
+
+A field the API adds later is kept: `toJson()` on every result (a page, the account, the balance, a
+purchase, the cards, an agent signup, claim or rotation) and on every object inside one (a list item,
+a job's options, the account limits) returns that object as received, with snake_case keys.
+`var_dump` and `print_r` show the named fields only.
 
 ## Transcribe
 
@@ -445,7 +449,8 @@ never a header, body, title or transcript text. The client's token never appears
 throws. In error messages, hints and causes, any URL keeps its scheme, host and path, but its query
 string becomes `?[redacted]`, and the claim secret is redacted once a claim has used it. Results that
 hand you a secret (the claim secret, a new token) show it as `[redacted]` in `var_dump` and
-`print_r`, but carry it in `json_encode`, `serialize` and `var_export`, which are your own export.
+`print_r`, but carry it in `toJson()`, `json_encode`, `serialize` and `var_export`, which are your own
+export.
 
 ## Server only
 

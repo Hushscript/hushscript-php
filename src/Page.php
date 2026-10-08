@@ -11,10 +11,14 @@ namespace Hushscript;
  */
 final readonly class Page
 {
+    use RawBody;
+
     /** @param list<T> $items */
     public function __construct(
         public array $items,
         public ?string $nextCursor,
+        /** @var array<mixed> the answer as received, for `toJson()` */
+        #[\SensitiveParameter] private array $raw = [],
     ) {
     }
 }

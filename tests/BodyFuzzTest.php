@@ -229,6 +229,58 @@ final class BodyFuzzTest extends TestCase
         self::assertGreaterThanOrEqual(1 + count(self::MUTATIONS), $runs);
     }
 
+    /**
+     * The top-level results (R99) with the one secret each must not show in a dump, if any.
+     *
+     * @return iterable<string, array{string, ?string}>
+     */
+    public static function topLevelResults(): iterable
+    {
+        foreach (['balance', 'account', 'cards', 'purchase', 'transcripts page'] as $name) {
+            yield $name => [$name, null];
+        }
+        yield 'signup' => ['signup', 'cs_0123456789abcdef0123'];
+        yield 'claim' => ['claim', Tokens::ROTATED];
+        yield 'rotation' => ['rotation', Tokens::ROTATED];
+    }
+
+    #[DataProvider('topLevelResults')]
+    public function testEveryTopLevelResultKeepsItsBodyInToJsonAndOutOfItsDumps(string $name, ?string $secret): void
+    {
+        $credential = ['pat' => Tokens::ROTATED, 'scopes' => ['account:read']];
+        [$body, $call] = match ($name) {
+            'signup' => [[...self::targets()['signup'][0], 'claim_secret' => 'cs_0123456789abcdef0123'], self::targets()['signup'][1]],
+            'claim' => [[...$credential, 'user_id' => 'usr_1', 'balance_seconds' => 2700], static fn (Rig $rig): mixed => Agent::claim($rig->exchange, $rig->credentials, '/v1/agent/accounts/sg_1/claim', 'cs_0123456789abcdef0123')],
+            'rotation' => [[...$credential, 'pat_id' => 'pat_2', 'expires_at' => null], static fn (Rig $rig): mixed => (new Agent($rig->exchange, $rig->credentials))->rotateToken()],
+            'transcripts page' => [self::targets()['transcripts page'][0], static fn (Rig $rig): mixed => (new Transcripts($rig->exchange))->page()],
+            default => self::targets()[$name],
+        };
+        $body['future_field'] = ['nested' => [1, null, 'future value']];
+        $result = $call(new Rig(new FakeHttp([FakeHttp::json(200, $body)])));
+        self::assertIsObject($result);
+        self::assertTrue(method_exists($result, 'toJson'), $result::class.' has toJson()');
+
+        self::assertSame($body, $result->toJson());
+        ob_start();
+        var_dump($result);
+        $dumps = [print_r($result, true), (string) ob_get_clean()];
+        foreach ($dumps as $dump) {
+            // A dump shows the named fields; the body as received is what toJson() is for.
+            self::assertStringNotContainsString('future value', $dump);
+            self::assertStringNotContainsString('raw', $dump);
+            if ($secret !== null) {
+                self::assertStringNotContainsString($secret, $dump);
+            }
+        }
+        if ($secret !== null) {
+            self::assertStringContainsString($secret, (string) json_encode($result->toJson()), 'toJson() is the caller\'s own export');
+        }
+        if ($name === 'claim') {
+            self::assertInstanceOf(\Hushscript\AgentAccount::class, $result);
+            self::assertSame(['balance_seconds' => 2700], $result->balance->toJson());
+        }
+    }
+
     /** @return iterable<string, array{string}> */
     public static function nestedModelNames(): iterable
     {

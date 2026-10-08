@@ -8,6 +8,8 @@ use Hushscript\Http\Body;
 
 final readonly class Account
 {
+    use RawBody;
+
     /**
      * @param  int  $balanceSeconds  net of holds and clawback debt; may be negative
      * @param  int  $heldSeconds  committed to in-flight jobs, and already deducted from `balanceSeconds`
@@ -22,6 +24,8 @@ final readonly class Account
         public string $dataRegion,
         public UploadLimits $limits,
         public ?int $purchasesRemainingInWindow,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
@@ -36,6 +40,7 @@ final readonly class Account
             $account->string('data_region'),
             UploadLimits::fromApi($account->child('limits')),
             $account->nullableCount('purchases_remaining_in_window'),
+            $account->raw(),
         );
     }
 }

@@ -149,7 +149,7 @@ final class Billing
             $path,
             $cursor === null ? [] : ['cursor' => $cursor],
             null,
-            static fn (#[\SensitiveParameter] Body $body): Page => new Page(array_map($row, $body->list($key)), $body->nullableString('next_cursor')),
+            static fn (#[\SensitiveParameter] Body $body): Page => new Page(array_map($row, $body->list($key)), $body->nullableString('next_cursor'), $body->raw()),
         ));
     }
 

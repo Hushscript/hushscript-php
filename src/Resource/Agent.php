@@ -74,7 +74,7 @@ final class Agent
                 throw $unreadable;
             }
 
-            return new RotatedToken($seen, $answer->string('pat_id'), $answer->strings('scopes'), $expires);
+            return new RotatedToken($seen, $answer->string('pat_id'), $answer->strings('scopes'), $expires, $answer->raw());
         });
     }
 
@@ -94,7 +94,7 @@ final class Agent
                 throw new BadBody('credential response (pat: expected a token)');
             }
 
-            return new AgentAccount($seen, $answer->string('user_id'), $answer->strings('scopes'), Balance::granted($answer->count('balance_seconds')));
+            return new AgentAccount($seen, $answer->string('user_id'), $answer->strings('scopes'), Balance::granted($answer->count('balance_seconds')), $answer->raw());
         });
     }
 

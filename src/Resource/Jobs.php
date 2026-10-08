@@ -46,7 +46,7 @@ final class Jobs
             '/v1/jobs',
             array_filter(['active' => $active ? 'true' : null, 'cursor' => $cursor], static fn (?string $value): bool => $value !== null),
             null,
-            static fn (#[\SensitiveParameter] Body $body): Page => new Page(array_map(Job::fromApi(...), $body->list('jobs')), $body->nullableString('next_cursor')),
+            static fn (#[\SensitiveParameter] Body $body): Page => new Page(array_map(Job::fromApi(...), $body->list('jobs')), $body->nullableString('next_cursor'), $body->raw()),
         ));
     }
 
