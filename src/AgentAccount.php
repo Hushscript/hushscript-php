@@ -7,6 +7,8 @@ namespace Hushscript;
 /** What `Client::agentClaim()` returns. */
 final readonly class AgentAccount
 {
+    use RawBody;
+
     /**
      * @param  string  $token  the account's token, shown once: write it down before anything else can fail
      * @param  list<string>  $scopes
@@ -17,6 +19,8 @@ final readonly class AgentAccount
         public string $userId,
         public array $scopes,
         public Balance $balance,
+        /** @var array<mixed> the answer as received, for `toJson()` */
+        #[\SensitiveParameter] private array $raw = [],
     ) {
     }
 

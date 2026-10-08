@@ -9,9 +9,10 @@ use Psr\Http\Message\RequestInterface;
 
 /**
  * How part requests leave the machine. The upload loop owns concurrency, retries and time; the
- * transport only starts a request and lets transfers make progress. A request that fails in transit
- * rejects with a PartFailure, which carries no URL, header or body: Guzzle's own exceptions hold the
- * request, and a presigned URL is a credential.
+ * transport only starts a request and lets transfers make progress. A request that fails rejects with
+ * a PartFailure (`PartFailure::of()`), which keeps the failure's class and its message with URL queries
+ * redacted, but no request, header or body: Guzzle's own exceptions hold the request, and a presigned
+ * URL's query is a credential.
  */
 interface PartTransport
 {

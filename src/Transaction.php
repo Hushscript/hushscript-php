@@ -9,6 +9,8 @@ use Hushscript\Http\Body;
 /** One purchase, as the API reports it. */
 final readonly class Transaction
 {
+    use RawBody;
+
     /** @param ?string $receiptNumber the public receipt reference, when there is one */
     private function __construct(
         public int $id,
@@ -23,6 +25,8 @@ final readonly class Transaction
         public ?string $paymentMethodLast4,
         public ?string $receiptNumber,
         public ?string $initiatedVia,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
@@ -42,6 +46,7 @@ final readonly class Transaction
             $transaction->nullableString('payment_method_last4'),
             $transaction->nullableString('receipt_number'),
             $transaction->nullableString('initiated_via'),
+            $transaction->raw(),
         );
     }
 }

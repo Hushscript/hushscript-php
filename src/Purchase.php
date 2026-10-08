@@ -10,6 +10,8 @@ use Hushscript\Http\Body;
 /** What a purchase left the account with, read from the purchase answer alone. */
 final readonly class Purchase
 {
+    use RawBody;
+
     /**
      * @param  int  $seconds  the balance after the purchase settled: spendable now, holds already deducted
      * @param  int  $minutes  `seconds / 60`, rounded toward zero
@@ -17,6 +19,8 @@ final readonly class Purchase
     private function __construct(
         public int $seconds,
         public int $minutes,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
@@ -28,6 +32,6 @@ final readonly class Purchase
         }
         $seconds = $body->integer('balance_seconds');
 
-        return new self($seconds, intdiv($seconds, 60));
+        return new self($seconds, intdiv($seconds, 60), $body->raw());
     }
 }

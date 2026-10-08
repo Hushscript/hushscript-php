@@ -9,6 +9,8 @@ use Hushscript\Http\Body;
 /** One movement of the credit balance. */
 final readonly class LedgerEntry
 {
+    use RawBody;
+
     private function __construct(
         public int $id,
         public int $deltaSeconds,
@@ -16,6 +18,8 @@ final readonly class LedgerEntry
         public ?string $jobId,
         public ?string $note,
         public \DateTimeImmutable $createdAt,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
@@ -29,6 +33,7 @@ final readonly class LedgerEntry
             $entry->nullableString('job_id'),
             $entry->nullableString('note'),
             $entry->timestamp('created_at'),
+            $entry->raw(),
         );
     }
 }

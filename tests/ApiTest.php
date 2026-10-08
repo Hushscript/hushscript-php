@@ -165,6 +165,83 @@ final class ApiTest extends TestCase
         self::assertSame(1, $http->count());
     }
 
+    /** @param \Closure(): \Throwable $make */
+    #[\PHPUnit\Framework\Attributes\DataProviderExternal(RetryMiddlewareTest::class, 'unexpectedFailures')]
+    public function testUnexpectedWrapperNamesTheOriginalTypeAndRedactsBothMessages(\Closure $make): void
+    {
+        $failure = $make();
+        $summary = $failure::class.': boom hsr…[redacted]';
+        $leads = [
+            'The SDK failed before the request was sent. ' => false,
+            'The SDK failed after the request was sent. ' => true,
+            'The call failed with an error that is not a network failure; the request may have been sent. ' => null,
+        ];
+        foreach ($leads as $lead => $sent) {
+            $error = \Hushscript\Http\Exchange::wrapUnexpected($failure, new \Hushscript\Credentials(\Hushscript\Tests\Support\Tokens::TEST), $sent);
+
+            self::assertSame(\Hushscript\Exception\HushscriptException::class, $error::class);
+            self::assertSame('unexpected_error', $error->errorCode);
+            self::assertNull($error->status);
+            self::assertNull($error->numericCode);
+            self::assertSame($lead.$summary, $error->getMessage());
+            $cause = $error->getPrevious();
+            self::assertNotNull($cause);
+            self::assertSame(\RuntimeException::class, $cause::class);
+            self::assertSame($summary, $cause->getMessage());
+            self::assertNull($cause->getPrevious());
+            self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true));
+        }
+    }
+
+    /** A client without the hardened transport: what it throws may have followed the sending, so nothing claims either. */
+    public function testAThrowFromAClientWithoutTheTransportSaysTheRequestMayHaveBeenSent(): void
+    {
+        $summary = 'TypeError: boom hsr…[redacted]';
+        foreach (['/v1/account' => null, '/v1/agent/accounts/sg_1/claim' => 'The claim may have succeeded. Retrying will fail with agent_claim_invalid. If you have no token, contact support with the signup id.'] as $path => $hint) {
+            $exchange = new \Hushscript\Http\Exchange(new FakeHttp([new \TypeError('boom '.\Hushscript\Tests\Support\Tokens::TEST)]), new \Hushscript\Credentials(\Hushscript\Tests\Support\Tokens::TEST), Rig::BASE);
+            try {
+                $exchange->request('POST', $path);
+                self::fail('expected an SDK error');
+            } catch (\Hushscript\Exception\HushscriptException $error) {
+                if ($hint === null) {
+                    self::assertSame(\Hushscript\Exception\HushscriptException::class, $error::class);
+                    self::assertSame('unexpected_error', $error->errorCode);
+                    self::assertSame('The call failed with an error that is not a network failure; the request may have been sent. '.$summary, $error->getMessage());
+                } else {
+                    self::assertSame(\Hushscript\Exception\OutcomeUnknownError::class, $error::class);
+                    self::assertSame('outcome_unknown', $error->errorCode);
+                    self::assertSame('The request may have been sent and no answer came back, so its outcome is unknown. '.$summary, $error->getMessage());
+                }
+                self::assertSame($hint, $error->hint);
+                self::assertSame($summary, $error->getPrevious()?->getMessage());
+            }
+        }
+    }
+
+    public function testAnUnusableNeverRouteAnswerNamesTheOriginalFailure(): void
+    {
+        $broken = $this->createMock(\Psr\Http\Message\ResponseInterface::class);
+        $broken->method('getStatusCode')->willThrowException(new \TypeError('boom '.\Hushscript\Tests\Support\Tokens::TEST));
+        $exchange = new \Hushscript\Http\Exchange(new FakeHttp([$broken]), new \Hushscript\Credentials(\Hushscript\Tests\Support\Tokens::TEST), Rig::BASE);
+
+        try {
+            $exchange->request('POST', '/v1/agent/accounts/sg_1/claim');
+            self::fail('expected outcome_unknown');
+        } catch (\Hushscript\Exception\HushscriptException $error) {
+            self::assertSame(\Hushscript\Exception\OutcomeUnknownError::class, $error::class);
+            self::assertSame('outcome_unknown', $error->errorCode);
+            self::assertNull($error->status);
+            self::assertNull($error->numericCode);
+            self::assertSame('The answer could not be used, so its outcome is unknown. TypeError: boom hsr…[redacted]', $error->getMessage());
+            $cause = $error->getPrevious();
+            self::assertNotNull($cause);
+            self::assertSame(\RuntimeException::class, $cause::class);
+            self::assertSame('TypeError: boom hsr…[redacted]', $cause->getMessage());
+            self::assertNull($cause->getPrevious());
+            self::assertStringNotContainsString(\Hushscript\Tests\Support\Tokens::TEST, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true));
+        }
+    }
+
     public function testTheInternalCollaboratorIsNotReachableThroughTheLowLevelApi(): void
     {
         $methods = array_map(static fn (\ReflectionMethod $method): string => $method->getName(), (new \ReflectionClass(\Hushscript\Api::class))->getMethods(\ReflectionMethod::IS_PUBLIC));

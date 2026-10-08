@@ -109,10 +109,33 @@ final class PartTransportTest extends TestCase
             $promise->wait();
             self::fail('expected a failure');
         } catch (PartFailure $failure) { // @phpstan-ignore catch.neverThrown
+            // R96: the failure names its class and keeps the host and path; the signed query is gone.
+            self::assertStringStartsWith('GuzzleHttp\\Exception\\ConnectException: ', $failure->getMessage());
+            self::assertTrue($failure->transport());
             self::assertStringNotContainsString('SECRET', (string) $failure);
-            self::assertStringNotContainsString('127.0.0.1', $failure->getMessage());
+            self::assertStringNotContainsString('X-Amz-Signature', $failure->getMessage());
             self::assertNull($failure->getPrevious());
         }
+    }
+
+    public function testAPartFailureIsATransportFailureOnlyForThePsrNetworkAndRequestErrors(): void
+    {
+        $request = new Request('PUT', 'https://r2.example.com/b/1?X-Amz-Signature=SECRET');
+        $cases = [
+            [new \GuzzleHttp\Exception\ConnectException('cURL error 7: refused for https://r2.example.com/b/1?X-Amz-Signature=SECRET', $request, null, ['errno' => 7]), true, 'GuzzleHttp\\Exception\\ConnectException: cURL error 7: refused for https://r2.example.com/b/1?[redacted] (errno 7)'],
+            [new \GuzzleHttp\Exception\RequestException('reset', $request), true, 'GuzzleHttp\\Exception\\RequestException: reset'],
+            [new \TypeError('boom at https://r2.example.com/b/1?X-Amz-Signature=SECRET'), false, 'TypeError: boom at https://r2.example.com/b/1?[redacted]'],
+            [new \RuntimeException(''), false, 'RuntimeException: '],
+            [new class ('client') extends \RuntimeException implements \Psr\Http\Client\ClientExceptionInterface {}, false, null],
+        ];
+        foreach ($cases as [$original, $transport, $message]) {
+            $failure = PartFailure::of($original);
+
+            self::assertSame($transport, $failure->transport(), $original::class);
+            self::assertSame($message ?? $original::class.': client', $failure->getMessage());
+            self::assertNull($failure->getPrevious());
+        }
+        self::assertTrue((new PartFailure('a transport of your own'))->transport(), 'a PartFailure a custom transport builds is a transport failure');
     }
 
     public function testTheMultiTransportIsAvailableWithCurl(): void

@@ -156,6 +156,7 @@ final class Exchange
             $request = $request->withHeader('Content-Type', 'application/json')->withBody(\GuzzleHttp\Psr7\Utils::streamFor($encoded));
         }
 
+        $response = null;
         try {
             $response = $this->http->sendRequest($request);
             $status = $response->getStatusCode();
@@ -167,37 +168,54 @@ final class Exchange
         } catch (HushscriptException $failure) {
             throw $failure;
         } catch (\Throwable $failure) {
+            // The hardened transport turns its own failures into SDK errors, so one that reaches here came either
+            // from a client without it, which may have sent the request, or after the answer arrived.
             $route = Routes::unrecoverable($method, $path);
             if ($route !== null) {
-                throw $this->lost($route, $failure);
+                throw $this->lost($route, $failure, $response !== null);
             }
-            throw $this->unexpected($failure);
+            throw self::wrapUnexpected($failure, $this->credentials, $response !== null ? true : null);
         }
     }
 
-    /** A failure of the SDK's own after a claim, rotation or signup went out: as lost as an answer that never came. */
-    private function lost(string $route, #[\SensitiveParameter] \Throwable $failure): OutcomeUnknownError
+    /** A failure after a claim, rotation or signup may have gone out: as lost as an answer that never came. */
+    private function lost(string $route, #[\SensitiveParameter] \Throwable $failure, bool $answered): OutcomeUnknownError
     {
+        $summary = self::summary($failure, $this->credentials);
+
         return new OutcomeUnknownError(
-            'The answer could not be used, so its outcome is unknown.',
+            ($answered ? 'The answer could not be used, so its outcome is unknown. ' : 'The request may have been sent and no answer came back, so its outcome is unknown. ').$summary,
             hint: Routes::UNKNOWN_HINTS[$route] ?? '',
-            previous: new \RuntimeException($this->credentials->scrub($failure::class.': '.$failure->getMessage())),
+            previous: new \RuntimeException($summary),
         );
     }
 
-    /** A failure of the SDK's own after the request was sent: the original is kept as a redacted cause. */
-    public function unexpected(#[\SensitiveParameter] \Throwable $failure): HushscriptException
+    /**
+     * A failure that fits no other error: `unexpected_error` with the original kept as a redacted stand-in cause. The
+     * message says whether the request was sent where that is known (R100): `$sent` is false before it went out, true
+     * after its answer arrived, and null when it may or may not have gone out.
+     */
+    public static function wrapUnexpected(#[\SensitiveParameter] \Throwable $failure, Credentials $credentials, ?bool $sent): HushscriptException
     {
-        return self::wrapUnexpected($failure, $this->credentials);
+        return self::unexpected(self::summary($failure, $credentials), $sent);
     }
 
-    public static function wrapUnexpected(#[\SensitiveParameter] \Throwable $failure, Credentials $credentials): HushscriptException
+    /** `unexpected_error` for a failure already summarized and scrubbed (see `wrapUnexpected`). */
+    public static function unexpected(string $summary, ?bool $sent): HushscriptException
     {
-        return new HushscriptException(
-            'The SDK failed after the request was sent.',
-            'unexpected_error',
-            previous: new \RuntimeException($credentials->scrub($failure::class.': '.$failure->getMessage())),
-        );
+        $context = match ($sent) {
+            false => 'The SDK failed before the request was sent. ',
+            true => 'The SDK failed after the request was sent. ',
+            null => 'The call failed with an error that is not a network failure; the request may have been sent. ',
+        };
+
+        return new HushscriptException($context.$summary, 'unexpected_error', previous: new \RuntimeException($summary));
+    }
+
+    /** The original error as text: its class and its message, with every token the client knows scrubbed. */
+    public static function summary(#[\SensitiveParameter] \Throwable $failure, Credentials $credentials): string
+    {
+        return $credentials->scrub($failure::class.': '.$failure->getMessage());
     }
 
     public static function badResponse(int $status): ApiError

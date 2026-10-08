@@ -9,6 +9,8 @@ use Hushscript\Http\Body;
 /** A minute pack as the account can see it. */
 final readonly class Pack
 {
+    use RawBody;
+
     /**
      * @param  string  $id  `45min`, `300min`, `900min`, `1800min` or `6000min`
      * @param  int  $seconds  what the pack adds
@@ -24,6 +26,8 @@ final readonly class Pack
         public Money $price,
         public int $bonusMinutes,
         public bool $available,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
@@ -39,6 +43,7 @@ final readonly class Pack
             Money::of($pack->integer('amount'), $pack->string('currency')),
             intdiv($pack->count('referral_bonus_seconds'), 60),
             $pack->nullableBool('available') !== false,
+            $pack->raw(),
         );
     }
 }

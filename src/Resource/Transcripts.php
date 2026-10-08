@@ -55,7 +55,10 @@ final class Transcripts
             throw new PreflightError('cursor must be a string.', 'invalid_option');
         }
 
-        return $this->summaries($cursor, $size);
+        $page = $this->summaries($cursor, $size);
+        Paginate::refuseRepeat($cursor, $page->nextCursor);
+
+        return $page;
     }
 
     /** @throws \Hushscript\Exception\HushscriptException */
@@ -78,7 +81,7 @@ final class Transcripts
             '/v1/transcripts/deleted',
             self::query($cursor, null),
             null,
-            static fn (#[\SensitiveParameter] Body $body): Page => new Page(array_map(DeletedTranscript::fromApi(...), $body->list('deleted')), $body->nullableString('next_cursor')),
+            static fn (#[\SensitiveParameter] Body $body): Page => new Page(array_map(DeletedTranscript::fromApi(...), $body->list('deleted')), $body->nullableString('next_cursor'), $body->raw()),
         ));
     }
 
@@ -90,7 +93,7 @@ final class Transcripts
             '/v1/transcripts',
             self::query($cursor, $size),
             null,
-            static fn (#[\SensitiveParameter] Body $body): Page => new Page(array_map(TranscriptSummary::fromApi(...), $body->list('transcripts')), $body->nullableString('next_cursor')),
+            static fn (#[\SensitiveParameter] Body $body): Page => new Page(array_map(TranscriptSummary::fromApi(...), $body->list('transcripts')), $body->nullableString('next_cursor'), $body->raw()),
         );
     }
 

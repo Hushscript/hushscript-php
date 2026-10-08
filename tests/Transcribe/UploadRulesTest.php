@@ -360,7 +360,7 @@ final class UploadRulesTest extends TestCase
 
         self::assertSame('bad_response', $error->errorCode);
         $surface = '';
-        for ($link = $error; $link !== null; $link = $link->getPrevious()) {
+        for ($link = \Hushscript\Tests\Support\SdkFrames::only($error); $link !== null; $link = $link->getPrevious()) {
             $surface .= print_r($link->getTrace(), true);
         }
         self::assertStringContainsString('Created', $surface, 'the trace has frames to inspect');

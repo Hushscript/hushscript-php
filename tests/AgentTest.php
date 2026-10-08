@@ -25,6 +25,7 @@ use Hushscript\Resource\Agent;
 use Hushscript\Tests\Support\FakeClock;
 use Hushscript\Tests\Support\FakeHttp;
 use Hushscript\Tests\Support\Rig;
+use Hushscript\Tests\Support\SdkFrames;
 use Hushscript\Tests\Support\Tokens;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -85,6 +86,7 @@ final class AgentTest extends TestCase
 
     private static function surface(\Throwable $error): string
     {
+        SdkFrames::only($error);
         $parts = [];
         for ($link = $error; $link !== null; $link = $link->getPrevious()) {
             $parts[] = $link->getMessage();
@@ -581,7 +583,7 @@ final class AgentTest extends TestCase
         } catch (OutcomeUnknownError $error) {
             self::assertSame(Tokens::ROTATED, $error->receivedToken());
             ob_start();
-            var_dump($error);
+            var_dump(SdkFrames::only($error));
             $dumped = (string) ob_get_clean();
             self::assertStringNotContainsString('bbbbbbbbbbbbbbbb', $dumped.self::surface($error));
         }
@@ -596,6 +598,25 @@ final class AgentTest extends TestCase
             self::fail('expected an error');
         } catch (AuthenticationError $error) {
             self::assertStringNotContainsString('cs_secret_0123456789ab', self::surface($error));
+        }
+    }
+
+    public function testAForeignErrorQuotingTheClaimSecretAndASignedUrlShowsNeither(): void
+    {
+        foreach ([new \TypeError('bad cs_secret_0123456789ab at https://r2.example.com/b/1?X-Amz-Signature=SIG'), new ConnectException('bad cs_secret_0123456789ab at https://r2.example.com/b/1?X-Amz-Signature=SIG', new Request('POST', Rig::BASE.'/v1/agent/accounts/sg_1/claim'))] as $failure) {
+            $http = new FakeHttp([$failure]);
+
+            try {
+                Client::agentClaim('sg_1', 'cs_secret_0123456789ab', self::options($http));
+                self::fail('expected OutcomeUnknownError');
+            } catch (OutcomeUnknownError $error) {
+                $summary = $failure::class.': bad hsr…[redacted] at https://r2.example.com/b/1?[redacted]';
+                self::assertSame('No response arrived for POST /v1/agent/accounts/sg_1/claim. '.$summary, $error->getMessage());
+                self::assertSame($summary, $error->getPrevious()?->getMessage());
+                self::assertSame(self::CLAIM_HINT, $error->hint);
+                self::assertStringNotContainsString('cs_secret_0123456789ab', self::surface($error));
+                self::assertStringNotContainsString('SIG', self::surface($error));
+            }
         }
     }
 
@@ -925,6 +946,8 @@ final class AgentTest extends TestCase
             self::fail('expected OutcomeUnknownError');
         } catch (OutcomeUnknownError $error) {
             self::assertSame(self::CLAIM_HINT, $error->hint);
+            self::assertSame('The answer to POST /v1/agent/accounts/sg_1/claim could not be read. RuntimeException: read failed hsr…[redacted]', $error->getMessage());
+            self::assertSame('RuntimeException: read failed hsr…[redacted]', $error->getPrevious()?->getMessage());
             self::assertStringNotContainsString(Tokens::TEST, self::surface($error));
         }
         self::assertSame(1, $http->count());
@@ -943,8 +966,33 @@ final class AgentTest extends TestCase
                 self::fail('expected OutcomeUnknownError');
             } catch (OutcomeUnknownError $error) {
                 self::assertSame($hint, $error->hint);
+                self::assertSame('The answer could not be used, so its outcome is unknown. RuntimeException: read failed hsr…[redacted]', $error->getMessage());
+                self::assertSame('RuntimeException: read failed hsr…[redacted]', $error->getPrevious()?->getMessage());
                 self::assertStringNotContainsString(Tokens::TEST, self::surface($error));
             }
+        }
+    }
+
+    public function testAFailureOfTheSdksOwnWhileReadingAMintedAnswerNamesTheOriginalType(): void
+    {
+        $http = new FakeHttp([FakeHttp::json(200, self::claimed())]);
+        $credentials = new Credentials(Tokens::TEST);
+        $exchange = new Exchange($http, $credentials, Rig::BASE);
+        $minted = new \ReflectionMethod(Agent::class, 'minted');
+
+        try {
+            $minted->invoke(null, $exchange, $credentials, '/v1/agent/accounts/sg_1/claim', null, \Hushscript\Http\Routes::CLAIM, static function (): never {
+                throw new \TypeError('boom '.Tokens::TEST);
+            });
+            self::fail('expected OutcomeUnknownError');
+        } catch (OutcomeUnknownError $error) {
+            self::assertSame('The answer to the claim could not be used, so the token may be lost. TypeError: boom hsr…[redacted]', $error->getMessage());
+            self::assertSame(self::CLAIM_HINT, $error->hint);
+            $cause = $error->getPrevious();
+            self::assertNotNull($cause);
+            self::assertSame(\RuntimeException::class, $cause::class);
+            self::assertSame('TypeError: boom hsr…[redacted]', $cause->getMessage());
+            self::assertStringNotContainsString(Tokens::TEST, self::surface($error));
         }
     }
 

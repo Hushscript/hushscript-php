@@ -22,7 +22,6 @@ use Hushscript\Http\RetryClass;
 use Hushscript\Http\RetryPolicy;
 use Hushscript\IdleClock;
 use Hushscript\Log;
-use Hushscript\Redact;
 use Hushscript\Secret;
 use Hushscript\Version;
 use Psr\Http\Message\ResponseInterface;
@@ -286,6 +285,10 @@ final class Uploader
 
             return;
         }
+        if ($answer instanceof PartFailure && ! $answer->transport()) {
+            // Not a transport failure (R86): neither retried nor sent another way.
+            throw Exchange::unexpected($this->credentials->scrub($answer->getMessage()), null);
+        }
         if ($decision !== null && $decision->retry) {
             $run->attempt++;
             $run->notBefore = $this->clock->now() + $decision->delay;
@@ -341,7 +344,7 @@ final class Uploader
         $this->start($run);
     }
 
-    /** What the last direct PUT of the part came to, as a cause that holds no URL or signature. */
+    /** What the last direct PUT of the part came to, as a cause whose URLs keep host and path but no query (R96). */
     private function directFailure(PartRun $run, #[\SensitiveParameter] ResponseInterface|PartFailure|null $answer): \Throwable
     {
         $where = 'The direct upload of part '.$run->n;
@@ -349,7 +352,13 @@ final class Uploader
             return new ApiError($where.' was answered with '.$answer->getStatusCode().'.', 'http_'.$answer->getStatusCode(), status: $answer->getStatusCode());
         }
 
-        return new NetworkError($where.' failed: '.Redact::text($answer instanceof PartFailure ? $answer->getMessage() : 'no answer').'.');
+        if (! $answer instanceof PartFailure) {
+            return new NetworkError($where.' failed: no answer.');
+        }
+        $summary = $this->credentials->scrub($answer->getMessage());
+
+        // No closing period: the redaction of a URL's query would take it as part of the query.
+        return new NetworkError($where.' failed: '.$summary, previous: new \RuntimeException($summary));
     }
 
     /**
@@ -408,9 +417,11 @@ final class Uploader
             return ErrorMapper::fromResponse($answer, $this->credentials, 'PUT', $path);
         }
 
+        $summary = $this->credentials->scrub($answer instanceof PartFailure ? $answer->getMessage() : 'no answer');
+
         return new NetworkError(
-            'Could not reach the Hushscript API: PUT '.$path.'.',
-            previous: new \RuntimeException($this->credentials->scrub($answer instanceof PartFailure ? $answer->getMessage() : 'no answer')),
+            'Could not reach the Hushscript API: PUT '.$path.'. '.$summary,
+            previous: new \RuntimeException($summary),
         );
     }
 

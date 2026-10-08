@@ -6,9 +6,11 @@ namespace Hushscript;
 
 use Hushscript\Http\Body;
 
-/** The caller's upload admission limits. A key the API adds later is not kept here; `$hs->api()` returns the whole body. */
+/** The caller's upload admission limits. A key the API adds later is in `toJson()`. */
 final readonly class UploadLimits
 {
+    use RawBody;
+
     /**
      * @param  int  $maxDailySeconds  the daily transcription cap
      * @param  int  $maxActiveJobs  the most pipeline jobs in flight at once
@@ -20,12 +22,14 @@ final readonly class UploadLimits
         public int $maxActiveJobs,
         public int $activeJobs,
         public int $usedTodaySeconds,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
     /** @internal */
     public static function fromApi(#[\SensitiveParameter] Body $limits): self
     {
-        return new self($limits->count('max_daily_seconds'), $limits->count('max_active_jobs'), $limits->count('active_jobs'), $limits->count('used_today_seconds'));
+        return new self($limits->count('max_daily_seconds'), $limits->count('max_active_jobs'), $limits->count('active_jobs'), $limits->count('used_today_seconds'), $limits->raw());
     }
 }

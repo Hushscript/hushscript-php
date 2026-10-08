@@ -54,12 +54,13 @@ final class UnexpectedFailureTest extends TestCase
             self::fail('expected an unexpected_error');
         } catch (HushscriptException $error) {
             self::assertSame('unexpected_error', $error->errorCode);
+            // The pipeline cannot tell how far its own request got when something else fails (R100).
+            self::assertSame('The call failed with an error that is not a network failure; the request may have been sent. TypeError: boom hsr…[redacted]', $error->getMessage());
             self::assertNotNull($error->idempotencyKey);
             self::assertNotNull($error->resumeToken);
             self::assertNotNull($error->getPrevious());
-            self::assertStringContainsString('TypeError', $error->getPrevious()->getMessage());
-            self::assertStringNotContainsString(Tokens::TEST, $error->getPrevious()->getMessage());
-            self::assertStringNotContainsString($error->resumeToken, print_r($error->getPrevious(), true));
+            self::assertSame('TypeError: boom hsr…[redacted]', $error->getPrevious()->getMessage());
+            self::assertStringNotContainsString($error->resumeToken, print_r(\Hushscript\Tests\Support\SdkFrames::only($error)->getPrevious(), true));
         }
     }
 

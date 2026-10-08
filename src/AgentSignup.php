@@ -9,6 +9,8 @@ use Hushscript\Http\Body;
 /** What `Client::agentSignup()` returns. */
 final readonly class AgentSignup
 {
+    use RawBody;
+
     /**
      * @param  string  $signupId  passed back to `Client::agentClaim()` verbatim
      * @param  string  $claimSecret  shown once; `Client::agentClaim()` needs it
@@ -20,6 +22,8 @@ final readonly class AgentSignup
         #[\SensitiveParameter] public string $checkoutUrl,
         public Money $price,
         public \DateTimeImmutable $expiresAt,
+        /** @var array<mixed> */
+        #[\SensitiveParameter] private array $raw,
     ) {
     }
 
@@ -32,6 +36,7 @@ final readonly class AgentSignup
             $body->string('checkout_url'),
             Money::of($body->integer('amount'), $body->string('currency')),
             $body->timestamp('expires_at'),
+            $body->raw(),
         );
     }
 

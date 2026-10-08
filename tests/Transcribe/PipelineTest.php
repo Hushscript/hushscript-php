@@ -306,7 +306,7 @@ final class PipelineTest extends TestCase
     public function testAPartThatFailsInTransitCarriesTheTransportFailureAsTheCauseWithoutTheUrl(): void
     {
         $harness = new PipelineHarness(script: static fn (array $request): array => [
-            self::partNumber($request['url']) === 1 ? PipelineHarness::stored() : PartFailure::of(new \RuntimeException('cURL error 28 for '.$request['url'])),
+            self::partNumber($request['url']) === 1 ? PipelineHarness::stored() : PartFailure::of(new \GuzzleHttp\Exception\ConnectException('cURL error 28 for '.$request['url'], new \GuzzleHttp\Psr7\Request('PUT', $request['url']))),
             0.0,
         ]);
         $harness->api->on('GET', '/v1/uploads/job_1/part-urls', PipelineHarness::json(200, ['part_size_bytes' => 1, 'total_parts' => 3, 'part_urls' => [['n' => 2, 'url' => PipelineHarness::url(2, '&fresh=1')], ['n' => 3, 'url' => PipelineHarness::url(3, '&fresh=1')]], 'next_part_number' => null]));
@@ -314,11 +314,16 @@ final class PipelineTest extends TestCase
         $error = self::failure($harness, UploadError::class);
 
         self::assertSame('parts_exhausted', $error->errorCode);
-        self::assertInstanceOf(NetworkError::class, $error->getPrevious());
+        $previous = $error->getPrevious();
+        self::assertInstanceOf(NetworkError::class, $previous);
+        // R96: the cause names what failed, host and path included; the signed query is gone.
+        $summary = 'GuzzleHttp\\Exception\\ConnectException: cURL error 28 for https://r2.example.com/hushscript/job_1/2?[redacted]';
+        self::assertSame('The direct upload of part 2 failed: '.$summary, $previous->getMessage());
+        self::assertSame($summary, $previous->getPrevious()?->getMessage());
         $harness->parts->sent = [];
         $harness->api->requests = [];
         self::assertStringNotContainsString('X-Amz-Signature', self::surface($error));
-        self::assertStringNotContainsString('r2.example.com', self::surface($error));
+        self::assertStringNotContainsString('SECRET', self::surface($error));
     }
 
     /**
@@ -801,7 +806,7 @@ final class PipelineTest extends TestCase
             'etag_missing' => new PipelineHarness(script: static fn (): array => [new Response(200), 0.0]),
             'refresh_failed' => new PipelineHarness(script: static fn (array $request): array => [self::partNumber($request['url']) === 1 ? PipelineHarness::stored() : self::fail500(), 0.0]),
             'job_failed' => new PipelineHarness(script: static fn (): array => [PipelineHarness::stored(), 0.0]),
-            default => new PipelineHarness(script: static fn (): array => [PartFailure::of(new \RuntimeException('cURL error 28 for '.PipelineHarness::url(1))), 0.0]),
+            default => new PipelineHarness(script: static fn (): array => [PartFailure::of(new \GuzzleHttp\Exception\ConnectException('cURL error 28 for '.PipelineHarness::url(1), new \GuzzleHttp\Psr7\Request('PUT', PipelineHarness::url(1)))), 0.0]),
         };
         $harness->api->on('GET', '/v1/uploads/job_1/part-urls', match ($scenario) {
             'refresh_failed' => static fn (RequestInterface $request): \Throwable => new \GuzzleHttp\Exception\ConnectException('cURL error 7 for '.$request->getUri(), $request),
@@ -825,7 +830,7 @@ final class PipelineTest extends TestCase
             $surface = self::surface($error);
             $token = self::firstHandedOut();
             self::assertIsString($token, 'the create succeeded, so a resume token was handed out');
-            foreach (['X-Amz-Signature', 'SECRET', 'r2.example.com', \Hushscript\Tests\Support\Tokens::TEST, $token] as $needle) {
+            foreach (['X-Amz-Signature', 'SECRET', \Hushscript\Tests\Support\Tokens::TEST, $token] as $needle) {
                 $at = strpos($surface, $needle);
                 self::assertFalse($at, $needle === $token ? 'the resume token' : $needle.' near: '.preg_replace('/[^\x20-\x7e]/', '.', substr($surface, max(0, (int) $at - 150), 300)));
             }
@@ -852,13 +857,64 @@ final class PipelineTest extends TestCase
 
     public function testAProxiedPartThatKeepsFailingInTransitIsANetworkErrorAfterTheRetries(): void
     {
-        $harness = new PipelineHarness(script: static fn (): array => [PartFailure::of(new \RuntimeException('connection reset')), 0.0]);
+        $harness = new PipelineHarness(script: static fn (): array => [PartFailure::of(new \GuzzleHttp\Exception\ConnectException('connection reset '.\Hushscript\Tests\Support\Tokens::TEST, new \GuzzleHttp\Psr7\Request('PUT', PipelineHarness::BASE))), 0.0]);
         $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, $harness->createBody(proxied: true)));
 
         $error = self::failure($harness, NetworkError::class);
 
         self::assertCount(4, $harness->parts->sent);
-        self::assertStringContainsString('PUT /v1/uploads/job_1/parts/1', $error->getMessage());
+        $summary = 'GuzzleHttp\\Exception\\ConnectException: connection reset hsr…[redacted]';
+        self::assertSame('Could not reach the Hushscript API: PUT /v1/uploads/job_1/parts/1. '.$summary, $error->getMessage());
+        $cause = $error->getPrevious();
+        self::assertNotNull($cause);
+        self::assertSame(\RuntimeException::class, $cause::class);
+        self::assertSame($summary, $cause->getMessage());
+    }
+
+    /** @return iterable<string, array{bool}> */
+    public static function partWays(): iterable
+    {
+        yield 'direct' => [false];
+        yield 'through the API' => [true];
+    }
+
+    #[DataProvider('partWays')]
+    public function testANonTransportErrorFromTheCallersClientOnAPartPutIsUnexpectedAndNotRetried(bool $proxied): void
+    {
+        $client = new class () implements \Psr\Http\Client\ClientInterface {
+            /** @var list<string> */
+            public array $paths = [];
+
+            #[\Override]
+            public function sendRequest(RequestInterface $request): \Psr\Http\Message\ResponseInterface
+            {
+                $this->paths[] = $request->getUri()->getPath();
+
+                throw new \TypeError('boom '.\Hushscript\Tests\Support\Tokens::TEST.' at '.PipelineHarness::url(1));
+            }
+        };
+        $harness = new PipelineHarness(transport: new \Hushscript\Transcribe\SyncTransport($client));
+        if ($proxied) {
+            $harness->api->on('POST', '/v1/uploads', PipelineHarness::json(200, $harness->createBody(proxied: true)));
+        }
+
+        $error = self::failure($harness);
+
+        $summary = 'TypeError: boom hsr…[redacted] at https://r2.example.com/hushscript/job_1/1?[redacted]';
+        self::assertSame(HushscriptException::class, $error::class);
+        self::assertSame('unexpected_error', $error->errorCode);
+        self::assertSame('The call failed with an error that is not a network failure; the request may have been sent. '.$summary, $error->getMessage());
+        $cause = $error->getPrevious();
+        self::assertNotNull($cause);
+        self::assertSame(\RuntimeException::class, $cause::class);
+        self::assertSame($summary, $cause->getMessage());
+        self::assertNotNull($error->idempotencyKey);
+        self::assertNotNull($error->resumeToken);
+        // The parts already started each went out once; none was retried or sent the other way.
+        self::assertSame(array_unique($client->paths), $client->paths);
+        self::assertSame([], array_filter($client->paths, static fn (string $path): bool => str_starts_with($path, $proxied ? '/hushscript/' : '/v1/')));
+        self::assertContains($proxied ? '/v1/uploads/job_1/parts/1' : '/hushscript/job_1/1', $client->paths);
+        self::assertStringNotContainsString('SECRET', self::surface($error));
     }
 
     public function testARateLimitedProxiedPartWithALongRetryAfterRaisesAtOnce(): void

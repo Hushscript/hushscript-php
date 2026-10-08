@@ -63,7 +63,13 @@ foreach ($hs->transcripts()->list() as $summary) {
 The list holds finished transcripts only. A recording that is still processing is a job, so look for
 it in `$hs->jobs()->list(['active' => true])`. `$hs->jobs()->wait($jobId)` waits for one, and
 `$hs->transcripts()->get($transcriptId)` returns the full `Transcript` once it is done. Lists are
-generators that fetch pages as you go; `page()` returns one page with its `nextCursor`.
+generators that fetch pages as you go; `page()` returns one page with its `nextCursor`, and raises
+`pagination_loop` if that equals the cursor you sent (an empty one ends the list).
+
+A field the API adds later is kept: `toJson()` on every result (a page, the account, the balance, a
+purchase, the cards, an agent signup, claim or rotation) and on every object inside one (a list item,
+a job's options, the account limits) returns that object as received, with snake_case keys.
+`var_dump` and `print_r` show the named fields only.
 
 ## Transcribe
 
@@ -298,10 +304,19 @@ HushscriptException
 
 An error raised after an upload started, or after a purchase was sent, carries `idempotencyKey`;
 once the job exists it carries `resumeToken` too. Pass the token to `$hs->resume($token, $file)` to
-carry on without a second charge. After the request was sent, every failure reaches you as one of
-these classes: a failure of the SDK's own is `HushscriptException` with the code `unexpected_error`
-and a redacted cause. An exception thrown by your own `on_progress` or `on_resume_token` callback
-comes back unchanged.
+carry on without a second charge. Every failure reaches you as one of these classes; one that fits
+no other is `HushscriptException` with the code `unexpected_error`, whose message says whether the
+request was sent when the SDK knows it ("before" or "after the request was sent") and says it may
+have been sent when it does not.
+
+A PSR-18 client that throws `NetworkExceptionInterface` or `RequestExceptionInterface`, or a response
+body that breaks off while it is read, is a transport failure: retried per the table, then a
+`NetworkError`. Any other exception the client throws is `unexpected_error` and is never retried,
+part uploads included. On a claim, rotation or signup, which are never sent twice, any failure after
+the request may have gone out is an `OutcomeUnknownError` whose hint says what to check. Every such
+message names the original class and its redacted message, and the cause is a stand-in carrying the
+same text. An exception thrown by your own `on_progress` or `on_resume_token` callback comes back
+unchanged.
 
 ### Hints and the methods they mean
 
@@ -361,8 +376,11 @@ ffmpeg -i input -vn -c:a libopus output.opus
 | `clock` | none | `Hushscript\Clock`, for tests |
 | `part_transport` | none | advanced: a `Hushscript\Transcribe\PartTransport` for part uploads |
 
-An explicit option beats its environment variable. The base URL must be `https://`, or `http://` to
-`localhost`, `127.0.0.1` or `[::1]`, with no path.
+An explicit option beats its environment variable. `null`, an empty string and a whitespace-only
+string (for the token, `base_url` and `log_level`), and an empty or whitespace-only variable, all mean
+"not set": the option, then the variable, then the default. A token still missing raises
+`ConfigurationError`. The base URL must be `https://`, or `http://` to `localhost`, `127.0.0.1` or
+`[::1]`, with no path.
 
 A custom `http_client` must not follow redirects and must return 4xx and 5xx answers as responses.
 The SDK still adds the retry and authorization rules around it, and sends the token only to the
@@ -429,9 +447,11 @@ The SDK sends no telemetry. The only client identification is the `User-Agent` h
 `'log_level' => 'debug'`) writes one line per request with the method, path, status and timing, and
 never a header, body, title or transcript text. The client's token never appears in `var_dump`,
 `print_r`, `var_export`, `json_encode`, exception messages or traces, and `serialize()` of the client
-throws. Results that hand you a secret (the claim secret, a new token) show it as `[redacted]` in
-`var_dump` and `print_r`, but carry it in `json_encode`, `serialize` and `var_export`, which are your
-own export.
+throws. In error messages, hints and causes, any URL keeps its scheme, host and path, but its query
+string becomes `?[redacted]`, and a claim secret of 16 or more characters is redacted once a claim has
+used it. Results that hand you a secret (the claim secret, a new token) show it as `[redacted]` in
+`var_dump` and `print_r`, but carry it in `toJson()`, `json_encode`, `serialize` and `var_export`,
+which are your own export.
 
 ## Server only
 

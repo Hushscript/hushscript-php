@@ -231,25 +231,266 @@ final class RetryMiddlewareTest extends TestCase
         self::assertCount(4, $http->requests);
     }
 
-    public function testAnyThrowableFromACustomClientIsANetworkFailure(): void
+    /**
+     * Factories, not exceptions: a provided value stays in the test case, and with trace arguments kept every SDK
+     * error's trace reaches the test runner and through it every test case's data.
+     *
+     * @return iterable<string, array{\Closure(): \Throwable}>
+     */
+    public static function unexpectedFailures(): iterable
     {
-        $http = new FakeHttp([new \RuntimeException('custom'), self::ok()]);
-        $rig = new Rig($http);
+        yield 'type error' => [static fn (): \Throwable => new \TypeError('boom '.Tokens::TEST)];
+        yield 'runtime error' => [static fn (): \Throwable => new \RuntimeException('boom '.Tokens::TEST)];
+        yield 'base PSR client error' => [static fn (): \Throwable => new class ('boom '.Tokens::TEST) extends \RuntimeException implements \Psr\Http\Client\ClientExceptionInterface {}];
+    }
 
-        self::assertSame(['ok' => true], $rig->api->request('GET', '/v1/account'));
+    /** @param \Closure(): \Throwable $make */
+    #[DataProvider('unexpectedFailures')]
+    public function testANonTransportThrowableFromTheClientIsUnexpectedAndNeverRetried(\Closure $make): void
+    {
+        $failure = $make();
+        foreach ([0, 3] as $maxRetries) {
+            foreach ([['GET', '/v1/account'], ['POST', '/v1/org/members'], ['POST', '/v1/billing/purchase'], ['POST', '/v1/uploads']] as [$method, $path]) {
+                $http = new FakeHttp([$failure, self::ok()]);
+                $rig = new Rig($http, maxRetries: $maxRetries);
+
+                try {
+                    $rig->api->request($method, $path, body: ['idempotency_key' => 'key_1']);
+                    self::fail('expected unexpected_error');
+                } catch (HushscriptException $error) {
+                    $summary = $failure::class.': boom hsr…[redacted]';
+                    self::assertUnexpectedFailure($error, 'The call failed with an error that is not a network failure; the request may have been sent. '.$summary, $summary);
+                }
+                self::assertSame(1, $http->count());
+                self::assertSame([], $rig->clock->sleeps);
+            }
+        }
+    }
+
+    /** @param \Closure(): \Throwable $make */
+    #[DataProvider('unexpectedFailures')]
+    public function testANonTransportThrowableFromTheClientOnANeverRouteIsAnUnknownOutcome(\Closure $make): void
+    {
+        $failure = $make();
+        foreach (self::neverRoutes() as [$path, $hint]) {
+            $http = new FakeHttp([$failure, self::ok()]);
+            $rig = new Rig($http);
+
+            try {
+                $rig->api->request('POST', $path, body: []);
+                self::fail('expected outcome_unknown');
+            } catch (HushscriptException $error) {
+                self::assertUnknownOutcome($error, 'No response arrived for POST '.$path.'. ', $failure::class.': boom hsr…[redacted]', $hint);
+            }
+            self::assertSame(1, $http->count());
+            self::assertSame([], $rig->clock->sleeps);
+        }
+    }
+
+    private static function assertUnexpectedFailure(HushscriptException $error, string $message, string $summary): void
+    {
+        self::assertSame(HushscriptException::class, $error::class);
+        self::assertSame('unexpected_error', $error->errorCode);
+        self::assertNull($error->status);
+        self::assertNull($error->numericCode);
+        self::assertSame($message, $error->getMessage());
+        $cause = $error->getPrevious();
+        self::assertNotNull($cause);
+        self::assertSame(\RuntimeException::class, $cause::class);
+        self::assertSame($summary, $cause->getMessage());
+        self::assertNull($cause->getPrevious());
+        self::assertStringNotContainsString(Tokens::TEST, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true));
+    }
+
+    private static function assertUnknownOutcome(HushscriptException $error, string $lead, string $summary, ?string $hint): void
+    {
+        self::assertSame(OutcomeUnknownError::class, $error::class);
+        self::assertSame('outcome_unknown', $error->errorCode);
+        self::assertNull($error->status);
+        self::assertNull($error->numericCode);
+        self::assertSame($lead.$summary, $error->getMessage());
+        self::assertSame($hint, $error->hint);
+        $cause = $error->getPrevious();
+        self::assertNotNull($cause);
+        self::assertSame(\RuntimeException::class, $cause::class);
+        self::assertSame($summary, $cause->getMessage());
+        self::assertNull($cause->getPrevious());
+        self::assertStringNotContainsString(Tokens::TEST, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true));
+    }
+
+    /** A 200 whose body breaks off after a few bytes: what a connection reset mid-body looks like through PSR-7. */
+    private static function brokenBody(): Response
+    {
+        return new Response(200, [], Utils::streamFor((static function (): \Generator {
+            yield 'partial';
+            throw new \RuntimeException('connection reset '.Tokens::TEST);
+        })()));
     }
 
     public function testAResponseBodyThatFailsMidReadIsAFailedAttempt(): void
     {
-        $broken = new Response(200, [], Utils::streamFor((static function (): \Generator {
-            yield 'partial';
-            throw new \RuntimeException('connection reset');
-        })()));
-        $http = new FakeHttp([$broken, self::ok()]);
+        $http = new FakeHttp([self::brokenBody(), self::ok()]);
         $rig = new Rig($http);
 
         self::assertSame(['ok' => true], $rig->api->request('GET', '/v1/account'));
         self::assertCount(2, $http->requests);
+        self::assertSame([0.5], $rig->clock->sleeps);
+    }
+
+    public function testABodyThatFailsMidReadOnEveryAttemptEndsAsANetworkError(): void
+    {
+        foreach ([0 => 1, 3 => 4] as $maxRetries => $attempts) {
+            $http = new FakeHttp(array_map(static fn (): Response => self::brokenBody(), range(1, $attempts)));
+            $rig = new Rig($http, maxRetries: $maxRetries);
+
+            try {
+                $rig->api->request('GET', '/v1/account');
+                self::fail('expected network_error');
+            } catch (HushscriptException $error) {
+                $summary = 'RuntimeException: connection reset hsr…[redacted]';
+                self::assertSame(NetworkError::class, $error::class);
+                self::assertSame('network_error', $error->errorCode);
+                self::assertSame('The answer to GET /v1/account could not be read. '.$summary, $error->getMessage());
+                $cause = $error->getPrevious();
+                self::assertNotNull($cause);
+                self::assertSame(\RuntimeException::class, $cause::class);
+                self::assertSame($summary, $cause->getMessage());
+                self::assertStringNotContainsString(Tokens::TEST, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true));
+            }
+            self::assertSame($attempts, $http->count());
+        }
+    }
+
+    #[DataProvider('neverRoutes')]
+    public function testABodyThatFailsMidReadOnANeverRouteIsAnUnknownOutcomeSentOnce(string $path, ?string $hint): void
+    {
+        $http = new FakeHttp([self::brokenBody(), self::ok()]);
+        $rig = new Rig($http);
+
+        try {
+            $rig->api->request('POST', $path, body: []);
+            self::fail('expected outcome_unknown');
+        } catch (HushscriptException $error) {
+            self::assertUnknownOutcome($error, 'The answer to POST '.$path.' could not be read. ', 'RuntimeException: connection reset hsr…[redacted]', $hint);
+        }
+        self::assertSame(1, $http->count());
+        self::assertSame([], $rig->clock->sleeps);
+    }
+
+    private function brokenStatus(): \Psr\Http\Message\ResponseInterface
+    {
+        $broken = $this->createMock(\Psr\Http\Message\ResponseInterface::class);
+        $broken->method('getBody')->willReturn(Utils::streamFor('{}'));
+        $broken->method('withBody')->willReturnSelf();
+        $broken->method('getStatusCode')->willThrowException(new \RuntimeException('status '.Tokens::TEST));
+
+        return $broken;
+    }
+
+    /** A response whose body accessor throws: an answer arrived, so the request was sent. */
+    private function brokenBodyAccessor(): \Psr\Http\Message\ResponseInterface
+    {
+        $broken = $this->createMock(\Psr\Http\Message\ResponseInterface::class);
+        $broken->method('getBody')->willThrowException(new \RuntimeException('status '.Tokens::TEST));
+
+        return $broken;
+    }
+
+    public function testAResponseMetadataRuntimeFailureIsUnexpectedAndNeverRetried(): void
+    {
+        foreach ([$this->brokenStatus(...), $this->brokenBodyAccessor(...)] as $broken) {
+            $http = new FakeHttp([$broken(), self::ok()]);
+            $rig = new Rig($http);
+
+            try {
+                $rig->api->request('GET', '/v1/account');
+                self::fail('expected unexpected_error');
+            } catch (HushscriptException $error) {
+                $summary = 'RuntimeException: status hsr…[redacted]';
+                self::assertUnexpectedFailure($error, 'The SDK failed after the request was sent. '.$summary, $summary);
+            }
+            self::assertSame(1, $http->count());
+            self::assertSame([], $rig->clock->sleeps);
+        }
+    }
+
+    #[DataProvider('neverRoutes')]
+    public function testAResponseMetadataFailureOnANeverRouteIsAnUnknownOutcome(string $path, ?string $hint): void
+    {
+        foreach ([$this->brokenStatus(...), $this->brokenBodyAccessor(...)] as $broken) {
+            $http = new FakeHttp([$broken(), self::ok()]);
+            $rig = new Rig($http);
+
+            try {
+                $rig->api->request('POST', $path, body: []);
+                self::fail('expected outcome_unknown');
+            } catch (HushscriptException $error) {
+                self::assertUnknownOutcome($error, 'The answer to POST '.$path.' could not be read. ', 'RuntimeException: status hsr…[redacted]', $hint);
+            }
+            self::assertSame(1, $http->count());
+        }
+    }
+
+    public function testAFailureBeforeTheRequestIsSentIsUnexpectedAndSaysSoOnEveryRoute(): void
+    {
+        foreach (['/v1/account', '/v1/agent/accounts/sg_1/claim', '/v1/agent/credentials/rotate', '/v1/agent/accounts'] as $path) {
+            $body = $this->createMock(\Psr\Http\Message\StreamInterface::class);
+            $body->method('isSeekable')->willReturn(true);
+            $body->method('rewind')->willThrowException(new \RuntimeException('rewind '.Tokens::TEST));
+            $http = new FakeHttp([self::ok()]);
+            $rig = new Rig($http);
+
+            try {
+                $rig->transport->sendRequest(new Request('POST', Rig::BASE.$path, [], $body));
+                self::fail('expected unexpected_error');
+            } catch (HushscriptException $error) {
+                $summary = 'RuntimeException: rewind hsr…[redacted]';
+                self::assertUnexpectedFailure($error, 'The SDK failed before the request was sent. '.$summary, $summary);
+            }
+            self::assertSame(0, $http->count());
+        }
+    }
+
+    /** @return iterable<string, array{\Closure(): \Throwable}> factories, as for unexpectedFailures() */
+    public static function transportFailures(): iterable
+    {
+        yield 'PSR network' => [static fn (): \Throwable => new ConnectException('boom '.Tokens::TEST, new Request('GET', Rig::BASE.'/v1/account'), null, ['errno' => 7])];
+        yield 'PSR request' => [static fn (): \Throwable => new RequestException('boom '.Tokens::TEST, new Request('GET', Rig::BASE.'/v1/account'))];
+    }
+
+    /** @param \Closure(): \Throwable $make */
+    #[DataProvider('transportFailures')]
+    public function testPsrTransportFailuresKeepRetriesAndTypedRedactedTerminalMessages(\Closure $make): void
+    {
+        $failure = $make();
+        $http = new FakeHttp([$failure, self::ok()]);
+        $rig = new Rig($http);
+        self::assertSame(['ok' => true], $rig->api->request('GET', '/v1/account'));
+        self::assertSame(2, $http->count());
+        self::assertSame([0.5], $rig->clock->sleeps);
+
+        foreach ([0 => 1, 3 => 4] as $maxRetries => $attempts) {
+            $http = new FakeHttp(array_fill(0, $attempts, $failure));
+            $rig = new Rig($http, maxRetries: $maxRetries);
+            try {
+                $rig->api->request('GET', '/v1/account');
+                self::fail('expected network_error');
+            } catch (HushscriptException $error) {
+                $summary = $failure::class.': boom hsr…[redacted]';
+                self::assertSame(NetworkError::class, $error::class);
+                self::assertSame('network_error', $error->errorCode);
+                self::assertNull($error->status);
+                self::assertNull($error->numericCode);
+                self::assertSame('Could not reach the Hushscript API: GET /v1/account. '.$summary, $error->getMessage());
+                $cause = $error->getPrevious();
+                self::assertNotNull($cause);
+                self::assertSame(\RuntimeException::class, $cause::class);
+                self::assertSame($summary, $cause->getMessage());
+                self::assertNull($cause->getPrevious());
+                self::assertStringNotContainsString(Tokens::TEST, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true));
+            }
+            self::assertSame($attempts, $http->count());
+        }
     }
 
     // Purchase (spec 7.2): network error, 502, 503; at most one retry, same body.
@@ -354,6 +595,14 @@ final class RetryMiddlewareTest extends TestCase
             $rig->api->request('POST', $path, body: []);
             self::fail('expected an OutcomeUnknownError');
         } catch (OutcomeUnknownError $error) {
+            self::assertNull($error->status);
+            self::assertNull($error->numericCode);
+            self::assertSame('No response arrived for POST '.$path.'. GuzzleHttp\\Exception\\RequestException: cURL error 56: recv failure', $error->getMessage());
+            $cause = $error->getPrevious();
+            self::assertNotNull($cause);
+            self::assertSame(\RuntimeException::class, $cause::class);
+            self::assertSame('GuzzleHttp\\Exception\\RequestException: cURL error 56: recv failure', $cause->getMessage());
+            self::assertNull($cause->getPrevious());
             self::assertSame($hint, $error->hint);
             self::assertSame('outcome_unknown', $error->errorCode);
         }
@@ -423,7 +672,7 @@ final class RetryMiddlewareTest extends TestCase
     #[DataProvider('mutationRoutes')]
     public function testAnUnlistedMutationIsNotReplayedOnceSent(string $method, string $path): void
     {
-        foreach ([self::lostResponse(), new \RuntimeException('custom client')] as $failure) {
+        foreach ([self::lostResponse()] as $failure) {
             $http = new FakeHttp([$failure, self::ok()]);
             $rig = new Rig($http);
 

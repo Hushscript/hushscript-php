@@ -221,11 +221,162 @@ final class BodyFuzzTest extends TestCase
                         ? Agent::claim($exchange, $credentials, '/v1/agent/accounts/sg_1/claim', 'cs_0123456789abcdef')
                         : (new Agent($exchange, $credentials))->rotateToken();
                 } catch (OutcomeUnknownError $error) {
-                    self::assertStringNotContainsString($token, print_r($error, true).$error->getMessage(), $text);
+                    self::assertStringNotContainsString($token, print_r(\Hushscript\Tests\Support\SdkFrames::only($error), true).$error->getMessage(), $text);
                 }
                 $runs++;
             }
         }
         self::assertGreaterThanOrEqual(1 + count(self::MUTATIONS), $runs);
+    }
+
+    /**
+     * The top-level results (R99) with the one secret each must not show in a dump, if any.
+     *
+     * @return iterable<string, array{string, ?string}>
+     */
+    public static function topLevelResults(): iterable
+    {
+        foreach (['balance', 'account', 'cards', 'purchase', 'transcripts page'] as $name) {
+            yield $name => [$name, null];
+        }
+        yield 'signup' => ['signup', 'cs_0123456789abcdef0123'];
+        yield 'claim' => ['claim', Tokens::ROTATED];
+        yield 'rotation' => ['rotation', Tokens::ROTATED];
+    }
+
+    #[DataProvider('topLevelResults')]
+    public function testEveryTopLevelResultKeepsItsBodyInToJsonAndOutOfItsDumps(string $name, ?string $secret): void
+    {
+        $credential = ['pat' => Tokens::ROTATED, 'scopes' => ['account:read']];
+        [$body, $call] = match ($name) {
+            'signup' => [[...self::targets()['signup'][0], 'claim_secret' => 'cs_0123456789abcdef0123'], self::targets()['signup'][1]],
+            'claim' => [[...$credential, 'user_id' => 'usr_1', 'balance_seconds' => 2700], static fn (Rig $rig): mixed => Agent::claim($rig->exchange, $rig->credentials, '/v1/agent/accounts/sg_1/claim', 'cs_0123456789abcdef0123')],
+            'rotation' => [[...$credential, 'pat_id' => 'pat_2', 'expires_at' => null], static fn (Rig $rig): mixed => (new Agent($rig->exchange, $rig->credentials))->rotateToken()],
+            'transcripts page' => [self::targets()['transcripts page'][0], static fn (Rig $rig): mixed => (new Transcripts($rig->exchange))->page()],
+            default => self::targets()[$name],
+        };
+        $body['future_field'] = ['nested' => [1, null, 'future value']];
+        $result = $call(new Rig(new FakeHttp([FakeHttp::json(200, $body)])));
+        self::assertIsObject($result);
+        self::assertTrue(method_exists($result, 'toJson'), $result::class.' has toJson()');
+
+        self::assertSame($body, $result->toJson());
+        ob_start();
+        var_dump($result);
+        $dumps = [print_r($result, true), (string) ob_get_clean()];
+        foreach ($dumps as $dump) {
+            // A dump shows the named fields; the body as received is what toJson() is for.
+            self::assertStringNotContainsString('future value', $dump);
+            self::assertStringNotContainsString('raw', $dump);
+            if ($secret !== null) {
+                self::assertStringNotContainsString($secret, $dump);
+            }
+        }
+        if ($secret !== null) {
+            self::assertStringContainsString($secret, (string) json_encode($result->toJson()), 'toJson() is the caller\'s own export');
+        }
+        if ($name === 'claim') {
+            self::assertInstanceOf(\Hushscript\AgentAccount::class, $result);
+            self::assertSame(['balance_seconds' => 2700], $result->balance->toJson());
+        }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function nestedModelNames(): iterable
+    {
+        foreach (['job options', 'upload limits', 'job', 'cards', 'packs', 'transcripts page', 'deleted page', 'transactions page', 'ledger page', 'holds page'] as $name) {
+            yield $name => [$name];
+        }
+    }
+
+    /** @return array<mixed> */
+    private static function nestedModelBody(string $name): array
+    {
+        if ($name === 'job options') {
+            $job = PipelineHarness::jobBody();
+            self::assertIsArray($job['options']);
+
+            return $job['options'];
+        }
+        if ($name === 'upload limits') {
+            return ['max_daily_seconds' => 100, 'max_active_jobs' => 2, 'active_jobs' => 0, 'used_today_seconds' => 0];
+        }
+        $body = self::targets()[$name][0];
+        if ($name === 'job') {
+            return $body;
+        }
+        $key = match ($name) {
+            'cards' => 'methods',
+            'packs' => 'packs',
+            'transcripts page' => 'transcripts',
+            'deleted page' => 'deleted',
+            'transactions page' => 'transactions',
+            'ledger page' => 'entries',
+            'holds page' => 'holds',
+            default => self::fail('unknown model '.$name),
+        };
+        self::assertIsArray($body[$key]);
+        self::assertIsArray($body[$key][0]);
+
+        return $body[$key][0];
+    }
+
+    /** @param array<mixed> $fields */
+    private static function nestedModel(string $name, array $fields): \Hushscript\JobOptions|\Hushscript\UploadLimits|\Hushscript\Job|\Hushscript\Card|\Hushscript\Pack|\Hushscript\TranscriptSummary|\Hushscript\DeletedTranscript|\Hushscript\Transaction|\Hushscript\LedgerEntry|\Hushscript\Hold
+    {
+        $body = Body::of($fields, 'response');
+
+        return match ($name) {
+            'job options' => \Hushscript\JobOptions::fromApi($body),
+            'upload limits' => \Hushscript\UploadLimits::fromApi($body),
+            'job' => \Hushscript\Job::fromApi($body),
+            'cards' => \Hushscript\Card::fromApi($body),
+            'packs' => \Hushscript\Pack::fromApi($body),
+            'transcripts page' => \Hushscript\TranscriptSummary::fromApi($body),
+            'deleted page' => \Hushscript\DeletedTranscript::fromApi($body),
+            'transactions page' => \Hushscript\Transaction::fromApi($body),
+            'ledger page' => \Hushscript\LedgerEntry::fromApi($body),
+            'holds page' => \Hushscript\Hold::fromApi($body),
+            default => self::fail('unknown model '.$name),
+        };
+    }
+
+    #[DataProvider('nestedModelNames')]
+    public function testNestedModelsKeepTheirDecodedSnakeCaseBodyInToJson(string $name): void
+    {
+        foreach ([null, '', ' ', "\t", "\u{2003}", false, 0, 1.5, [], ['nested_key' => ['items' => [null, 'value', ['future_flag' => true]]]]] as $unknown) {
+            $fields = [...self::nestedModelBody($name), 'future_field' => $unknown];
+            $model = self::nestedModel($name, $fields);
+
+            self::assertSame($fields, $model->toJson());
+            $copy = $model->toJson();
+            $copy['future_field'] = 'changed';
+            self::assertSame($fields, $model->toJson(), 'mutating an accessor result leaves the model intact');
+        }
+    }
+
+    #[DataProvider('nestedModelNames')]
+    public function testRawRetentionDoesNotAcceptMalformedKnownNestedFields(string $name): void
+    {
+        [$key, $type] = match ($name) {
+            'job options' => ['speaker_detection', 'a boolean'],
+            'upload limits' => ['max_daily_seconds', 'a whole number'],
+            'job' => ['created_at', 'a unix timestamp in seconds'],
+            'cards' => ['exp_month', 'a whole number'],
+            'packs', 'holds page', 'transactions page' => ['seconds', 'a whole number'],
+            'transcripts page', 'deleted page' => ['duration_seconds', 'a whole number'],
+            'ledger page' => ['delta_seconds', 'a whole number'],
+            default => self::fail('unknown model '.$name),
+        };
+        foreach ([null, '', ' ', "\t", "\u{2003}", [], '12', 1.5] as $invalid) {
+            $fields = [...self::nestedModelBody($name), $key => $invalid, 'future_field' => ['nested_key' => true]];
+            try {
+                self::nestedModel($name, $fields);
+                self::fail('expected BadBody');
+            } catch (\Hushscript\Http\BadBody $error) {
+                self::assertSame(0, $error->getCode());
+                self::assertSame('response.'.$key.': expected '.$type, $error->getMessage());
+            }
+        }
     }
 }

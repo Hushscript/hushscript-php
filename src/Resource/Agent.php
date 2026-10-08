@@ -41,7 +41,7 @@ final class Agent
     /**
      * Mints a successor token and revokes the one in use. The client sends the new token from then on, to retries
      * already queued as well; store the returned one right away. It is never retried. Apart from an API error
-     * answer, a failure after the request was sent is an `OutcomeUnknownError` whose hint says what to check: a lost
+     * answer, a failure after the request may have gone out is an `OutcomeUnknownError` whose hint says what to check: a lost
      * answer, an answer without a usable token, or a failure of the SDK's own while reading it. The error's
      * `receivedToken()` holds the token the answer carried; the client sends it from then on when it passes the
      * token check and the expiry can be read, and keeps its old token otherwise.
@@ -74,7 +74,7 @@ final class Agent
                 throw $unreadable;
             }
 
-            return new RotatedToken($seen, $answer->string('pat_id'), $answer->strings('scopes'), $expires);
+            return new RotatedToken($seen, $answer->string('pat_id'), $answer->strings('scopes'), $expires, $answer->raw());
         });
     }
 
@@ -94,7 +94,7 @@ final class Agent
                 throw new BadBody('credential response (pat: expected a token)');
             }
 
-            return new AgentAccount($seen, $answer->string('user_id'), $answer->strings('scopes'), Balance::granted($answer->count('balance_seconds')));
+            return new AgentAccount($seen, $answer->string('user_id'), $answer->strings('scopes'), Balance::granted($answer->count('balance_seconds')), $answer->raw());
         });
     }
 
@@ -189,11 +189,12 @@ final class Agent
 
             return $use(Body::of($fields, 'response'), $seen);
         } catch (\Throwable $failure) {
-            $cause = $failure instanceof BadBody ? Exchange::badResponse($status) : new \RuntimeException($credentials->scrub($failure::class.': '.$failure->getMessage()));
+            $summary = $failure instanceof BadBody ? null : Exchange::summary($failure, $credentials);
+            $cause = $summary === null ? Exchange::badResponse($status) : new \RuntimeException($summary);
         }
 
         throw new OutcomeUnknownError(
-            $credentials->scrub('The answer to '.($route === Routes::CLAIM ? 'the claim' : 'the rotation').' could not be used, so the token may be lost.'),
+            $credentials->scrub('The answer to '.($route === Routes::CLAIM ? 'the claim' : 'the rotation').' could not be used, so the token may be lost.'.($summary === null ? '' : ' '.$summary)),
             hint: Routes::UNKNOWN_HINTS[$route] ?? '',
             previous: $cause,
             receivedToken: $seen,
