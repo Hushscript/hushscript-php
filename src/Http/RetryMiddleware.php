@@ -110,6 +110,8 @@ final class RetryMiddleware implements ClientInterface
         $maxRetries = $rewindable ? $this->maxRetries : 0;
         $attempt = 0;
         $limited = [];
+        // Whether any attempt may have reached the server: until one has, a failure provably sent nothing.
+        $sentAny = false;
 
         while (true) {
             // Pacing takes a token per attempt, not per request: a retried create is another create.
@@ -141,6 +143,7 @@ final class RetryMiddleware implements ClientInterface
                 $response = null;
                 $outcome = new Outcome(failed: true, notSent: $stage === self::SENDING && self::provablyNotSent($failure));
             }
+            $sentAny = $sentAny || ! $outcome->notSent;
             $kind = RetryPolicy::createLimitKind($class, $outcome);
             $decision = RetryPolicy::decide(
                 $class,
@@ -157,7 +160,7 @@ final class RetryMiddleware implements ClientInterface
             $attempt++;
             if (! $decision->retry) {
                 if ($response === null) {
-                    throw $this->failureError($class, $route, "{$method} {$label}", $summary, $outcome->notSent, $stage === self::READING);
+                    throw $this->failureError($class, $route, "{$method} {$label}", $summary, $outcome->notSent, $stage === self::READING, ! $sentAny);
                 }
 
                 return $response;
@@ -256,9 +259,13 @@ final class RetryMiddleware implements ClientInterface
         return new Outcome($status, ErrorMapper::parseRetryAfter($retryAfter === '' ? null : $retryAfter), $slug);
     }
 
-    private function failureError(RetryClass $class, ?string $route, string $where, string $summary, bool $notSent, bool $unread): HushscriptException
+    private function failureError(RetryClass $class, ?string $route, string $where, string $summary, bool $notSent, bool $unread, bool $nothingSent): HushscriptException
     {
         $cause = new \RuntimeException($summary);
+        if ($nothingSent) {
+            // No attempt got as far as sending (R100, R103): nothing can have happened on the server.
+            return Unsent::mark(new NetworkError("Could not reach the Hushscript API: {$where}; it failed before the request was sent. {$summary}", previous: $cause));
+        }
         if ($class === RetryClass::Never && ! $notSent) {
             return new OutcomeUnknownError(
                 ($unread ? "The answer to {$where} could not be read. " : "No response arrived for {$where}. ").$summary,

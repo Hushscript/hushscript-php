@@ -492,10 +492,15 @@ final class BillingTest extends TestCase
         }
     }
 
-    public function testAFailureBeforeTheConnectionWasMadeStillCarriesTheKey(): void
+    private static function refused(): ConnectException
     {
-        $refused = static fn (): ConnectException => new ConnectException('cURL error 7', new Request('POST', Rig::BASE.'/v1/billing/purchase'), null, ['errno' => 7, 'pretransfer_time' => 0.0]);
-        $http = new FakeHttp([self::cards('pm_1', [self::card('pm_1', true)]), $refused(), $refused()]);
+        return new ConnectException('cURL error 7', new Request('POST', Rig::BASE.'/v1/billing/purchase'), null, ['errno' => 7, 'pretransfer_time' => 0.0]);
+    }
+
+    // R103: a purchase that provably never left charged nothing, so it carries no key and says so.
+    public function testAPurchaseThatNeverLeftCarriesNoKeyAndSaysSo(): void
+    {
+        $http = new FakeHttp([self::cards('pm_1', [self::card('pm_1', true)]), self::refused(), self::refused()]);
 
         try {
             self::billing($http)->buy('300min', false, 'k1');
@@ -504,10 +509,42 @@ final class BillingTest extends TestCase
             self::assertSame(NetworkError::class, $error::class);
             self::assertSame('network_error', $error->errorCode);
             self::assertNull($error->status);
-            self::assertSame('k1', $error->idempotencyKey);
-            self::assertSame(self::sent($http->requests[1])['idempotency_key'], $error->idempotencyKey);
-            self::assertSame(self::sent($http->requests[2])['idempotency_key'], $error->idempotencyKey);
+            self::assertSame('Could not reach the Hushscript API: POST /v1/billing/purchase; it failed before the request was sent. GuzzleHttp\\Exception\\ConnectException: cURL error 7', $error->getMessage());
+            self::assertNull($error->idempotencyKey);
         }
+        self::assertCount(2, self::to($http, '/v1/billing/purchase'));
+    }
+
+    public function testAPurchaseWhoseFirstAttemptMayHaveLeftKeepsTheKeyWhateverTheLastFailure(): void
+    {
+        $lost = new RequestException('cURL error 56', new Request('POST', Rig::BASE.'/v1/billing/purchase'), null, null, ['errno' => 56, 'pretransfer_time' => 0.01]);
+        $http = new FakeHttp([self::cards('pm_1', [self::card('pm_1', true)]), $lost, self::refused()]);
+
+        try {
+            self::billing($http)->buy('300min', false, 'k1');
+            self::fail('expected NetworkError');
+        } catch (HushscriptException $error) {
+            self::assertSame(NetworkError::class, $error::class);
+            self::assertSame('Could not reach the Hushscript API: POST /v1/billing/purchase. GuzzleHttp\\Exception\\ConnectException: cURL error 7', $error->getMessage());
+            self::assertSame('k1', $error->idempotencyKey);
+        }
+        self::assertCount(2, self::to($http, '/v1/billing/purchase'));
+    }
+
+    public function testAPurchaseBodyThatCannotBeEncodedCarriesNoKeyAndSendsNothing(): void
+    {
+        $http = new FakeHttp([self::cards('pm_1', [self::card('pm_1', true)])]);
+
+        try {
+            self::billing($http)->buy("300min\xff", false, 'k1');
+            self::fail('expected PreflightError');
+        } catch (HushscriptException $error) {
+            self::assertSame(PreflightError::class, $error::class);
+            self::assertSame('invalid_option', $error->errorCode);
+            self::assertSame('The request body cannot be encoded as JSON, so it failed before the request was sent.', $error->getMessage());
+            self::assertNull($error->idempotencyKey);
+        }
+        self::assertCount(0, self::to($http, '/v1/billing/purchase'));
     }
 
     /** @return iterable<string, array{\GuzzleHttp\Psr7\Response}> */

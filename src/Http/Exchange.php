@@ -142,7 +142,7 @@ final class Exchange
     {
         $method = strtoupper($method);
         if (! in_array($method, self::METHODS, true)) {
-            throw new PreflightError('Unsupported HTTP method "'.Redact::text($method).'".', 'invalid_option');
+            throw Unsent::mark(new PreflightError('Unsupported HTTP method "'.Redact::text($method).'".', 'invalid_option'));
         }
         self::checkPath($path);
         $queryString = self::queryString($query);
@@ -151,7 +151,7 @@ final class Exchange
             try {
                 $encoded = $body === [] ? '{}' : json_encode($body, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             } catch (\JsonException) {
-                throw new PreflightError('The request body cannot be encoded as JSON.', 'invalid_option');
+                throw Unsent::mark(new PreflightError('The request body cannot be encoded as JSON, so it failed before the request was sent.', 'invalid_option'));
             }
             $request = $request->withHeader('Content-Type', 'application/json')->withBody(\GuzzleHttp\Psr7\Utils::streamFor($encoded));
         }
@@ -209,7 +209,9 @@ final class Exchange
             null => 'The call failed with an error that is not a network failure; the request may have been sent. ',
         };
 
-        return new HushscriptException($context.$summary, 'unexpected_error', previous: new \RuntimeException($summary));
+        $error = new HushscriptException($context.$summary, 'unexpected_error', previous: new \RuntimeException($summary));
+
+        return $sent === false ? Unsent::mark($error) : $error;
     }
 
     /** The original error as text: its class and its message, with every token the client knows scrubbed. */
@@ -231,7 +233,7 @@ final class Exchange
             || str_contains($path, '//')
             || preg_match('~(^|/)\.\.?(/|$)~', $path) === 1
             || preg_match('~%(2e|2f|5c)~i', $path) === 1) {
-            throw new PreflightError('The request path must be an absolute API path such as /v1/account.', 'invalid_option');
+            throw Unsent::mark(new PreflightError('The request path must be an absolute API path such as /v1/account.', 'invalid_option'));
         }
     }
 
