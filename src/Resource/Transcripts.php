@@ -55,7 +55,10 @@ final class Transcripts
             throw new PreflightError('cursor must be a string.', 'invalid_option');
         }
 
-        return $this->summaries($cursor, $size);
+        $page = $this->summaries($cursor, $size);
+        Paginate::refuseRepeat($cursor, $page->nextCursor);
+
+        return $page;
     }
 
     /** @throws \Hushscript\Exception\HushscriptException */

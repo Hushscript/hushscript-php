@@ -38,9 +38,19 @@ final class Paginate
             if ($cursor === null || $cursor === '') {
                 return;
             }
-            if ($cursor === $sent) {
-                throw new HushscriptException('The API returned the same page cursor it was sent; stopping instead of repeating it.', 'pagination_loop');
-            }
+            self::refuseRepeat($sent, $cursor);
+        }
+    }
+
+    /**
+     * A next cursor equal to the non-null cursor just sent would repeat the same page forever.
+     *
+     * @throws HushscriptException
+     */
+    public static function refuseRepeat(?string $sent, ?string $next): void
+    {
+        if ($sent !== null && $next === $sent) {
+            throw new HushscriptException('The API returned the same page cursor it was sent; stopping instead of repeating it.', 'pagination_loop');
         }
     }
 }

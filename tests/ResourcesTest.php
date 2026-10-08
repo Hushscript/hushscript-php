@@ -381,6 +381,61 @@ final class ResourcesTest extends TestCase
         self::assertSame(['finance', 'review'], $item->tags);
     }
 
+    /** @return iterable<string, array{string, bool}> */
+    public static function repeatedPageCursors(): iterable
+    {
+        foreach (['opaque' => 'same', 'empty' => '', 'spaces' => '   ', 'tab' => "\t", 'unicode' => "\u{00A0}"] as $name => $cursor) {
+            yield $name.' with items' => [$cursor, true];
+            yield $name.' without items' => [$cursor, false];
+        }
+    }
+
+    #[DataProvider('repeatedPageCursors')]
+    public function testOnePageRejectsTheNonNullCursorItWasSent(string $cursor, bool $withItems): void
+    {
+        $http = new FakeHttp([self::page($withItems ? [self::row(1)] : [], $cursor)]);
+
+        try {
+            (new Transcripts((new Rig($http))->exchange))->page(['cursor' => $cursor]);
+            self::fail('expected pagination_loop');
+        } catch (HushscriptException $error) {
+            self::assertSame(HushscriptException::class, $error::class);
+            self::assertSame('pagination_loop', $error->errorCode);
+            self::assertNull($error->status);
+            self::assertSame('The API returned the same page cursor it was sent; stopping instead of repeating it.', $error->getMessage());
+            self::assertNull($error->getPrevious());
+        }
+
+        self::assertCount(1, $http->requests);
+        self::assertSame(['cursor='.rawurlencode($cursor)], self::queries($http));
+    }
+
+    /** @return iterable<string, array{?string, ?string}> */
+    public static function advancingPageCursors(): iterable
+    {
+        yield 'initial null ends' => [null, null];
+        yield 'initial empty ends' => [null, ''];
+        yield 'initial advances' => [null, 'next'];
+        yield 'empty sent ends with null' => ['', null];
+        yield 'empty sent advances' => ['', 'next'];
+        yield 'opaque sent ends with null' => ['previous', null];
+        yield 'opaque sent ends with empty' => ['previous', ''];
+        yield 'opaque sent advances' => ['previous', 'next'];
+        yield 'whitespace stays opaque' => [' ', "\t"];
+    }
+
+    #[DataProvider('advancingPageCursors')]
+    public function testOnePageAcceptsAnInitialOrDifferentNextCursor(?string $cursor, ?string $next): void
+    {
+        $http = new FakeHttp([self::page([self::row(1)], $next)]);
+        $page = (new Transcripts((new Rig($http))->exchange))->page(['cursor' => $cursor]);
+
+        self::assertSame($next, $page->nextCursor);
+        self::assertSame('tr_001', $page->items[0]->id);
+        self::assertCount(1, $http->requests);
+        self::assertSame([$cursor === null ? '' : 'cursor='.rawurlencode($cursor)], self::queries($http));
+    }
+
     /** @return iterable<string, array{array<string, mixed>}> */
     public static function invalidPageOptions(): iterable
     {

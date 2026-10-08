@@ -63,7 +63,8 @@ foreach ($hs->transcripts()->list() as $summary) {
 The list holds finished transcripts only. A recording that is still processing is a job, so look for
 it in `$hs->jobs()->list(['active' => true])`. `$hs->jobs()->wait($jobId)` waits for one, and
 `$hs->transcripts()->get($transcriptId)` returns the full `Transcript` once it is done. Lists are
-generators that fetch pages as you go; `page()` returns one page with its `nextCursor`.
+generators that fetch pages as you go; `page()` returns one page with its `nextCursor`, and raises
+`pagination_loop` if that equals the cursor you sent.
 
 ## Transcribe
 
