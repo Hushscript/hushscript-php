@@ -275,9 +275,18 @@ final class RedactionTest extends TestCase
 
     public function testASignedUrlQueryIsRedactedInAnyText(): void
     {
-        $text = 'PUT https://r2.example.com/bucket/obj?X-Amz-Signature=abcdef&X-Amz-Date=1 failed';
-
-        self::assertSame('PUT https://r2.example.com/bucket/obj?…[redacted] failed', Redact::text($text));
+        $cases = [
+            'PUT https://r2.example.com/bucket/obj?X-Amz-Signature=abcdef&X-Amz-Date=1 failed' => 'PUT https://r2.example.com/bucket/obj?[redacted] failed',
+            'HTTPS://R2.example.com/Bucket/obj?X-Amz-Signature=abcdef' => 'HTTPS://R2.example.com/Bucket/obj?[redacted]',
+            'for "http://127.0.0.1:9000/b/1?sig=abc#part" (reset)' => 'for "http://127.0.0.1:9000/b/1?[redacted]#part" (reset)',
+            'https://r2.example.com/a?x=1 and https://r2.example.com/b?y=2' => 'https://r2.example.com/a?[redacted] and https://r2.example.com/b?[redacted]',
+            'https://r2.example.com/bucket/obj without a query' => 'https://r2.example.com/bucket/obj without a query',
+            'a question? no URL here' => 'a question? no URL here',
+        ];
+        foreach ($cases as $text => $expected) {
+            self::assertSame($expected, Redact::text($text), $text);
+            self::assertSame($expected, (new Credentials(Tokens::TEST))->scrub($text), $text);
+        }
     }
 
     public function testATokenShapedStringIsRedactedEvenWhenItIsNotTheClientsOwn(): void

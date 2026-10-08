@@ -601,6 +601,25 @@ final class AgentTest extends TestCase
         }
     }
 
+    public function testAForeignErrorQuotingTheClaimSecretAndASignedUrlShowsNeither(): void
+    {
+        foreach ([new \TypeError('bad cs_secret_0123456789ab at https://r2.example.com/b/1?X-Amz-Signature=SIG'), new ConnectException('bad cs_secret_0123456789ab at https://r2.example.com/b/1?X-Amz-Signature=SIG', new Request('POST', Rig::BASE.'/v1/agent/accounts/sg_1/claim'))] as $failure) {
+            $http = new FakeHttp([$failure]);
+
+            try {
+                Client::agentClaim('sg_1', 'cs_secret_0123456789ab', self::options($http));
+                self::fail('expected OutcomeUnknownError');
+            } catch (OutcomeUnknownError $error) {
+                $summary = $failure::class.': bad hsr…[redacted] at https://r2.example.com/b/1?[redacted]';
+                self::assertSame('No response arrived for POST /v1/agent/accounts/sg_1/claim. '.$summary, $error->getMessage());
+                self::assertSame($summary, $error->getPrevious()?->getMessage());
+                self::assertSame(self::CLAIM_HINT, $error->hint);
+                self::assertStringNotContainsString('cs_secret_0123456789ab', self::surface($error));
+                self::assertStringNotContainsString('SIG', self::surface($error));
+            }
+        }
+    }
+
     public function testTheClaimedTokenIsScrubbedFromWhatTheFailureShows(): void
     {
         $http = new FakeHttp([FakeHttp::json(200, ['pat' => Tokens::ROTATED, 'user_id' => ['x' => Tokens::ROTATED], 'scopes' => [], 'balance_seconds' => 1])]);

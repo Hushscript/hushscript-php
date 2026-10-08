@@ -11,12 +11,13 @@ final class Redact
 {
     public const MARKER = 'hsr…[redacted]';
 
-    public const QUERY_MARKER = '…[redacted]';
+    /** What replaces the query string of a URL: `https://host/path?[redacted]` (R96). */
+    public const QUERY_MARKER = '[redacted]';
 
     private const TOKEN_PATTERN = '/hsr\d+:[a-z]+:pat\.[0-9a-f]+\.[0-9a-f]+/';
 
     // The query of a presigned storage URL is a signature, so no text the SDK shows keeps one.
-    private const URL_QUERY_PATTERN = '~(https?://[^\s"\'<>?#]+)\?[^\s"\'<>#]*~';
+    private const URL_QUERY_PATTERN = '~(https?://[^\s"\'<>?#]+)\?[^\s"\'<>#]*~i';
 
     private function __construct()
     {
