@@ -927,7 +927,7 @@ final class AgentTest extends TestCase
             self::fail('expected OutcomeUnknownError');
         } catch (OutcomeUnknownError $error) {
             self::assertSame(self::CLAIM_HINT, $error->hint);
-            self::assertSame('No response arrived for POST /v1/agent/accounts/sg_1/claim. RuntimeException: read failed hsr…[redacted]', $error->getMessage());
+            self::assertSame('The answer to POST /v1/agent/accounts/sg_1/claim could not be read. RuntimeException: read failed hsr…[redacted]', $error->getMessage());
             self::assertSame('RuntimeException: read failed hsr…[redacted]', $error->getPrevious()?->getMessage());
             self::assertStringNotContainsString(Tokens::TEST, self::surface($error));
         }

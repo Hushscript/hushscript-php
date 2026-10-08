@@ -161,7 +161,7 @@ final class Pipeline
             if ($options->callbacks->raised($failure)) {
                 throw $failure;
             }
-            $error = $failure instanceof HushscriptException ? $failure : Exchange::wrapUnexpected($failure, $this->credentials);
+            $error = $failure instanceof HushscriptException ? $failure : Exchange::wrapUnexpected($failure, $this->credentials, null);
             if ($key !== null) {
                 $error->idempotencyKey ??= $tracker->key;
             }

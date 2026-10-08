@@ -40,6 +40,15 @@ final class RetryMiddleware implements ClientInterface
 
     private const CURLOPT_FORBID_REUSE = 75;
 
+    // How far an attempt got: what a failure at that point says about whether the request went out.
+    private const PREPARING = 0;
+
+    private const SENDING = 1;
+
+    private const READING = 2;
+
+    private const ANSWERED = 3;
+
     private readonly string $baseScheme;
 
     private readonly string $baseHost;
@@ -113,24 +122,24 @@ final class RetryMiddleware implements ClientInterface
             $started = $this->clock->now();
             $response = null;
             $summary = '';
-            $answered = false;
+            $stage = self::PREPARING;
             try {
-                $response = $this->attemptOnce($request, $onBase, $class, $answered);
+                $response = $this->attemptOnce($request, $onBase, $class, $stage);
                 $outcome = $this->outcomeOf($response, $class);
             } catch (\Throwable $failure) {
-                $transport = $failure instanceof NetworkExceptionInterface || $failure instanceof RequestExceptionInterface;
-                // An answer that came back but cannot be read, on a route whose answer cannot be had again, stays an
-                // unknown outcome (spec 7.4): the request was sent, and its hint says what to check.
-                if (! $transport && ! ($answered && $class === RetryClass::Never)) {
-                    // Not a transport failure (R86): a bug or misuse in the caller's client, so it is neither retried nor
-                    // called a network error.
-                    $this->log->attempt($method, $label, null, $attempt + 1, ($this->clock->now() - $started) * 1000, null);
-
-                    throw Exchange::wrapUnexpected($failure, $this->credentials);
-                }
                 // Strings only: the exception holds the request, which carries the Authorization header.
                 $summary = Exchange::summary($failure, $this->credentials);
-                $outcome = new Outcome(failed: true, notSent: self::provablyNotSent($failure));
+                // A body that fails midway is a connection that failed midway: PSR-7 streams report it as a plain
+                // RuntimeException, so the stage says what it is, not the class.
+                if (! $failure instanceof NetworkExceptionInterface && ! $failure instanceof RequestExceptionInterface && $stage !== self::READING) {
+                    // Not a transport failure (R86): a bug or misuse in the caller's client or the SDK, so it is neither
+                    // retried nor called a network error.
+                    $this->log->attempt($method, $label, null, $attempt + 1, ($this->clock->now() - $started) * 1000, null);
+
+                    throw $this->notTransport($failure, $stage, $class, $route, "{$method} {$label}", $summary);
+                }
+                $response = null;
+                $outcome = new Outcome(failed: true, notSent: $stage === self::SENDING && self::provablyNotSent($failure));
             }
             $kind = RetryPolicy::createLimitKind($class, $outcome);
             $decision = RetryPolicy::decide(
@@ -148,7 +157,7 @@ final class RetryMiddleware implements ClientInterface
             $attempt++;
             if (! $decision->retry) {
                 if ($response === null) {
-                    throw $this->failureError($class, $route, $method, $label, $summary, $outcome->notSent);
+                    throw $this->failureError($class, $route, "{$method} {$label}", $summary, $outcome->notSent, $stage === self::READING);
                 }
 
                 return $response;
@@ -162,7 +171,8 @@ final class RetryMiddleware implements ClientInterface
         $this->ticker === null ? $this->clock->sleep($seconds) : $this->ticker->sleep($this->clock, $seconds);
     }
 
-    private function attemptOnce(#[\SensitiveParameter] RequestInterface $request, bool $onBase, RetryClass $class, bool &$answered): ResponseInterface
+    /** @param  self::*  $stage  how far the attempt got, kept up to date for the caller */
+    private function attemptOnce(#[\SensitiveParameter] RequestInterface $request, bool $onBase, RetryClass $class, int &$stage): ResponseInterface
     {
         $outgoing = $request->withHeader('User-Agent', 'hushscript-php/'.Version::SDK.' php/'.PHP_VERSION);
         // Read per attempt, after any sleep: a rotation applies to retries already queued (spec 7.4).
@@ -175,15 +185,17 @@ final class RetryMiddleware implements ClientInterface
         if ($body->isSeekable()) {
             $body->rewind();
         }
+        $stage = self::SENDING;
         $response = $this->transmit($outgoing, $class);
-        $answered = true;
+        $stream = $response->getBody();
         // Read inside the attempt: a body that fails midway is a failed attempt. The bytes go back
         // into a seekable stream, so a body that cannot be rewound still reaches the caller whole.
-        $stream = $response->getBody();
+        $stage = self::READING;
         if ($stream->isSeekable()) {
             $stream->rewind();
         }
         $contents = $stream->getContents();
+        $stage = self::ANSWERED;
 
         return $response->withBody(Utils::streamFor($contents));
     }
@@ -243,20 +255,43 @@ final class RetryMiddleware implements ClientInterface
         return new Outcome($status, ErrorMapper::parseRetryAfter($retryAfter === '' ? null : $retryAfter), $slug);
     }
 
-    private function failureError(RetryClass $class, ?string $route, string $method, string $label, string $summary, bool $notSent): HushscriptException
+    private function failureError(RetryClass $class, ?string $route, string $where, string $summary, bool $notSent, bool $unread): HushscriptException
     {
         $cause = new \RuntimeException($summary);
-        $where = "{$method} {$label}";
         if ($class === RetryClass::Never && ! $notSent) {
             return new OutcomeUnknownError(
-                "No response arrived for {$where}. {$summary}",
+                ($unread ? "The answer to {$where} could not be read. " : "No response arrived for {$where}. ").$summary,
                 'outcome_unknown',
                 hint: Routes::UNKNOWN_HINTS[$route ?? ''] ?? '',
                 previous: $cause,
             );
         }
 
-        return new NetworkError("Could not reach the Hushscript API: {$where}. {$summary}", previous: $cause);
+        return new NetworkError(($unread ? "The answer to {$where} could not be read. " : "Could not reach the Hushscript API: {$where}. ").$summary, previous: $cause);
+    }
+
+    /**
+     * A failure that is not a transport failure (R86, R100, R101). Before the request went out it is
+     * `unexpected_error` saying so. Once it may have gone out, a claim, rotation or signup has an unknown outcome
+     * whose hint says what to check, and any other call is `unexpected_error` saying what is known.
+     *
+     * @param  self::*  $stage
+     */
+    private function notTransport(#[\SensitiveParameter] \Throwable $failure, int $stage, RetryClass $class, ?string $route, string $where, string $summary): HushscriptException
+    {
+        if ($stage === self::PREPARING) {
+            return Exchange::wrapUnexpected($failure, $this->credentials, false);
+        }
+        if ($class === RetryClass::Never) {
+            return new OutcomeUnknownError(
+                ($stage === self::SENDING ? "No response arrived for {$where}. " : "The answer to {$where} could not be read. ").$summary,
+                'outcome_unknown',
+                hint: Routes::UNKNOWN_HINTS[$route ?? ''] ?? '',
+                previous: new \RuntimeException($summary),
+            );
+        }
+
+        return Exchange::wrapUnexpected($failure, $this->credentials, $stage === self::SENDING ? null : true);
     }
 
     /**

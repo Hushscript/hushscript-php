@@ -300,12 +300,19 @@ HushscriptException
 
 An error raised after an upload started, or after a purchase was sent, carries `idempotencyKey`;
 once the job exists it carries `resumeToken` too. Pass the token to `$hs->resume($token, $file)` to
-carry on without a second charge. After the request was sent, every failure reaches you as one of
-these classes: a failure of the SDK's own is `HushscriptException` with the code `unexpected_error`
-and a redacted cause. A PSR-18 client that throws `NetworkExceptionInterface` or `RequestExceptionInterface`
-is a `NetworkError` (retried per the table); any other exception it throws is `unexpected_error`, never
-retried. Both messages name the original class and its redacted message. An exception thrown by your own `on_progress` or `on_resume_token` callback
-comes back unchanged.
+carry on without a second charge. Every failure reaches you as one of these classes; one that fits
+no other is `HushscriptException` with the code `unexpected_error`, whose message says whether the
+request was sent when the SDK knows it ("before" or "after the request was sent") and says it may
+have been sent when it does not.
+
+A PSR-18 client that throws `NetworkExceptionInterface` or `RequestExceptionInterface`, or a response
+body that breaks off while it is read, is a transport failure: retried per the table, then a
+`NetworkError`. Any other exception the client throws is `unexpected_error` and is never retried.
+On a claim, rotation or signup, which are never sent twice, any failure after the
+request may have gone out is an `OutcomeUnknownError` whose hint says what to check. Every such
+message names the original class and its redacted message, and the cause is a stand-in carrying the
+same text. An exception thrown by your own `on_progress` or `on_resume_token` callback comes back
+unchanged.
 
 ### Hints and the methods they mean
 
