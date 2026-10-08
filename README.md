@@ -473,6 +473,14 @@ minutes of the recording; medical mode and each translation target use more. Cur
 - `guzzlehttp/guzzle` ^7 and `james-heinrich/getid3` (installed by Composer)
 - `ext-curl` for concurrent part uploads (without it, or with a client of your own, parts go one at a time)
 
+## Links
+
+- Documentation: <https://hushscript.com/sdks>
+- REST API reference: <https://hushscript.com/developers>
+- Package on Packagist: <https://packagist.org/packages/hushscript/hushscript>
+- Source: <https://github.com/Hushscript/hushscript-php>
+- Other Hushscript SDKs: [TypeScript](https://github.com/Hushscript/hushscript-typescript), [Python](https://github.com/Hushscript/hushscript-python), [Go](https://github.com/Hushscript/hushscript-go), [CLI](https://github.com/Hushscript/hushscript-cli)
+
 ## Releases
 
 Releases come from release-please. Every push to `main` runs the `release` workflow, which opens or
