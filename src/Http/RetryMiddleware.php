@@ -187,6 +187,7 @@ final class RetryMiddleware implements ClientInterface
         }
         $stage = self::SENDING;
         $response = $this->transmit($outgoing, $class);
+        $stage = self::ANSWERED;
         $stream = $response->getBody();
         // Read inside the attempt: a body that fails midway is a failed attempt. The bytes go back
         // into a seekable stream, so a body that cannot be rewound still reaches the caller whole.

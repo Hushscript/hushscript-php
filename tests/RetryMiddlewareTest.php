@@ -387,35 +387,48 @@ final class RetryMiddlewareTest extends TestCase
         return $broken;
     }
 
+    /** A response whose body accessor throws: an answer arrived, so the request was sent. */
+    private function brokenBodyAccessor(): \Psr\Http\Message\ResponseInterface
+    {
+        $broken = $this->createMock(\Psr\Http\Message\ResponseInterface::class);
+        $broken->method('getBody')->willThrowException(new \RuntimeException('status '.Tokens::TEST));
+
+        return $broken;
+    }
+
     public function testAResponseMetadataRuntimeFailureIsUnexpectedAndNeverRetried(): void
     {
-        $http = new FakeHttp([$this->brokenStatus(), self::ok()]);
-        $rig = new Rig($http);
+        foreach ([$this->brokenStatus(...), $this->brokenBodyAccessor(...)] as $broken) {
+            $http = new FakeHttp([$broken(), self::ok()]);
+            $rig = new Rig($http);
 
-        try {
-            $rig->api->request('GET', '/v1/account');
-            self::fail('expected unexpected_error');
-        } catch (HushscriptException $error) {
-            $summary = 'RuntimeException: status hsr…[redacted]';
-            self::assertUnexpectedFailure($error, 'The SDK failed after the request was sent. '.$summary, $summary);
+            try {
+                $rig->api->request('GET', '/v1/account');
+                self::fail('expected unexpected_error');
+            } catch (HushscriptException $error) {
+                $summary = 'RuntimeException: status hsr…[redacted]';
+                self::assertUnexpectedFailure($error, 'The SDK failed after the request was sent. '.$summary, $summary);
+            }
+            self::assertSame(1, $http->count());
+            self::assertSame([], $rig->clock->sleeps);
         }
-        self::assertSame(1, $http->count());
-        self::assertSame([], $rig->clock->sleeps);
     }
 
     #[DataProvider('neverRoutes')]
     public function testAResponseMetadataFailureOnANeverRouteIsAnUnknownOutcome(string $path, ?string $hint): void
     {
-        $http = new FakeHttp([$this->brokenStatus(), self::ok()]);
-        $rig = new Rig($http);
+        foreach ([$this->brokenStatus(...), $this->brokenBodyAccessor(...)] as $broken) {
+            $http = new FakeHttp([$broken(), self::ok()]);
+            $rig = new Rig($http);
 
-        try {
-            $rig->api->request('POST', $path, body: []);
-            self::fail('expected outcome_unknown');
-        } catch (HushscriptException $error) {
-            self::assertUnknownOutcome($error, 'The answer to POST '.$path.' could not be read. ', 'RuntimeException: status hsr…[redacted]', $hint);
+            try {
+                $rig->api->request('POST', $path, body: []);
+                self::fail('expected outcome_unknown');
+            } catch (HushscriptException $error) {
+                self::assertUnknownOutcome($error, 'The answer to POST '.$path.' could not be read. ', 'RuntimeException: status hsr…[redacted]', $hint);
+            }
+            self::assertSame(1, $http->count());
         }
-        self::assertSame(1, $http->count());
     }
 
     public function testAFailureBeforeTheRequestIsSentIsUnexpectedAndSaysSoOnEveryRoute(): void
