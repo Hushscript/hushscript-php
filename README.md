@@ -64,7 +64,7 @@ The list holds finished transcripts only. A recording that is still processing i
 it in `$hs->jobs()->list(['active' => true])`. `$hs->jobs()->wait($jobId)` waits for one, and
 `$hs->transcripts()->get($transcriptId)` returns the full `Transcript` once it is done. Lists are
 generators that fetch pages as you go; `page()` returns one page with its `nextCursor`, and raises
-`pagination_loop` if that equals the cursor you sent. A field the API adds later is kept: `toJson()` on
+`pagination_loop` if that equals the cursor you sent (an empty one ends the list). A field the API adds later is kept: `toJson()` on
 a transcript, a job and its options, the account limits and each list item returns the object as received.
 
 ## Transcribe

@@ -43,13 +43,14 @@ final class Paginate
     }
 
     /**
-     * A next cursor equal to the non-null cursor just sent would repeat the same page forever.
+     * A next cursor equal to the non-null cursor just sent would repeat the same page forever. A null or empty next
+     * cursor ends the list, so it never repeats anything.
      *
      * @throws HushscriptException
      */
     public static function refuseRepeat(?string $sent, ?string $next): void
     {
-        if ($sent !== null && $next === $sent) {
+        if ($sent !== null && $next !== '' && $next === $sent) {
             throw new HushscriptException('The API returned the same page cursor it was sent; stopping instead of repeating it.', 'pagination_loop');
         }
     }

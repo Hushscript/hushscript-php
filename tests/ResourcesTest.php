@@ -409,7 +409,8 @@ final class ResourcesTest extends TestCase
     /** @return iterable<string, array{string, bool}> */
     public static function repeatedPageCursors(): iterable
     {
-        foreach (['opaque' => 'same', 'empty' => '', 'spaces' => '   ', 'tab' => "\t", 'unicode' => "\u{00A0}"] as $name => $cursor) {
+        // An empty next cursor ends the list (as in the iterator), so an empty cursor sent and answered is no loop.
+        foreach (['opaque' => 'same', 'spaces' => '   ', 'tab' => "\t", 'unicode' => "\u{00A0}"] as $name => $cursor) {
             yield $name.' with items' => [$cursor, true];
             yield $name.' without items' => [$cursor, false];
         }
@@ -443,6 +444,7 @@ final class ResourcesTest extends TestCase
         yield 'initial advances' => [null, 'next'];
         yield 'empty sent ends with null' => ['', null];
         yield 'empty sent advances' => ['', 'next'];
+        yield 'empty sent ends with empty' => ['', ''];
         yield 'opaque sent ends with null' => ['previous', null];
         yield 'opaque sent ends with empty' => ['previous', ''];
         yield 'opaque sent advances' => ['previous', 'next'];
