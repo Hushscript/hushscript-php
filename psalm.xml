@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<psalm
+    xmlns="https://getpsalm.org/schema/config"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="https://getpsalm.org/schema/config vendor/vimeo/psalm/config.xsd"
+    errorLevel="8"
+    cacheDirectory="/tmp/psalm"
+    findUnusedCode="false"
+    findUnusedBaselineEntry="false"
+    resolveFromConfigFile="true"
+>
+    <!-- Taint analysis only (spec 13.2): run with the taint-analysis flag. Types are PHPStan's job. -->
+    <projectFiles>
+        <directory name="src"/>
+        <ignoreFiles>
+            <directory name="src/Generated"/>
+        </ignoreFiles>
+    </projectFiles>
+</psalm>

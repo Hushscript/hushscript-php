@@ -1,0 +1,168 @@
+{
+    "$schema": "vendor/infection/infection/resources/schema.json",
+    // Nightly, not on PRs (spec 13.2): the HTTP core and the transcribe pipeline.
+    "source": {
+        "directories": ["src/Http", "src/Transcribe"]
+    },
+    "tmpDir": "/tmp/infection",
+    "logs": {
+        "text": "/reports/infection.log",
+        "json": "/reports/infection.json"
+    },
+    "mutators": {
+        "@default": true,
+        // Equivalent mutants, one source line each (the line is matched whole).
+        "NullSafeMethodCall": {
+            "ignoreSourceCodeByRegex": [
+                // start() gives the part a URL, or moves it to the API, before it builds a direct request.
+                "\\$uri = new Uri\\(\\$run->url\\?->reveal\\(\\) \\?\\? ''\\);",
+                // The failed URL came from the book, which never drops an entry.
+                "if \\(\\$failedUrl !== null && \\$this->book->current\\(\\$n\\)\\?->equals\\(\\$failedUrl\\) === true\\) \\{",
+            ],
+        },
+        "InstanceOf_": {
+            "ignoreSourceCodeByRegex": [
+                // Only a response has a status; the check narrows the type for acknowledged().
+                "if \\(\\$success && \\$answer instanceof ResponseInterface\\) \\{",
+            ],
+        },
+        "LogicalAnd": {
+            "ignoreSourceCodeByRegex": [
+                // Without advancing, the page asked for lies below the cursor, so the cursor test only matters when advancing.
+                "if \\(\\$advance && \\$cursor !== null && \\$cursor <= \\$start\\) \\{",
+            ],
+        },
+        "LogicalOrAllSubExprNegation": {
+            "ignoreSourceCodeByRegex": [
+                // A page starts at the part asked for, so on the ordered path the part is the cursor.
+                "if \\(\\$start === null \\|\\| \\$n < \\$start\\) \\{",
+                // Options::from: the duration was already checked to be null or a positive int or float.
+                ".*, is_int\\(\\$duration\\) \\|\\| is_float\\(\\$duration\\) \\? \\$duration : null, .*",
+            ],
+        },
+        // Per-site exclusions of mutants shown equivalent (mutation sweep 2026-10-11): each changes
+        // only how much work is done, never a result. Method-scoped entries cover every site of
+        // that mutator in the method.
+        "Break_": {
+            // Mp3Scan::walk: after a failed resync no header is left, so walking on ends the same way.
+            "ignore": ["Hushscript\\Transcribe\\Mp3Scan::walk"]
+        },
+        "FalseValue": {
+            // Mp3Scan::resync: each false means no countable header is left; true makes walk retry to the same end.
+            "ignore": ["Hushscript\\Transcribe\\Mp3Scan::resync"],
+            "ignoreSourceCodeByRegex": [
+                // getID3 options that only add parsing work; none changes playtime_seconds.
+                "\\$reader->option_[a-z0-9_]+ = false;",
+                // StreamView::of: the include path plays no part in opening a stream wrapper URL.
+                "\\$view = @fopen\\(self::PROTOCOL \\. '://stream', 'rb', false, \\$context\\);"
+            ]
+        },
+        "LessThan": {
+            "ignoreSourceCodeByRegex": [
+                // Mp3Scan::have: refilling at exactly enough bytes reads one block early.
+                "while \\(strlen\\(\\$this->buffer\\) - \\$this->position < \\$count && !\\$this->ended\\) \\{",
+                // Preflight::media: the format sniff needs at least 2 bytes, so a 1-byte file never reaches the size check.
+                "if \\(\\$source->size < 1 \\|\\| \\$source->size > self::MAX_BYTES\\) \\{"
+            ]
+        },
+        "LessThanOrEqualTo": {
+            "ignoreSourceCodeByRegex": [
+                // Mp3Scan::skip: a skip to exactly the buffer end seeks there instead of stepping.
+                "if \\(\\$count <= \\$left\\) \\{",
+                // Mp3Scan::resync: preg_match at the buffer length cannot match either way.
+                "if \\(\\$this->position <= strlen\\(\\$this->buffer\\) && preg_match\\(.*",
+                // Source::read: a zero length reads nothing either way.
+                "if \\(\\$length <= 0\\) \\{"
+            ]
+        },
+        "GreaterThanOrEqualTo": {
+            "ignoreSourceCodeByRegex": [
+                // Source::readNext: at the head's end both branches fill the whole range.
+                "if \\(\\$offset >= strlen\\(\\$head\\)\\) \\{"
+            ]
+        },
+        "IncrementInteger": {
+            "ignoreSourceCodeByRegex": [
+                // Mp3Scan::seconds: fstat on an open file always has a size; any fallback under 10 rejects every tag.
+                "return \\(new self\\(\\$handle, is_array\\(\\$stat\\) \\? \\$stat\\['size'\\] : 0\\)\\)->walk\\(\\);",
+                // Mp3Scan::resync: one byte left can never start a header.
+                "if \\(!\\$this->have\\(1\\)\\) \\{",
+                // Mp3Scan::resync: the pattern needs 3 bytes, so 2, 3 or 4 kept bytes find the same headers.
+                "\\$this->position = max\\(\\$this->position, strlen\\(\\$this->buffer\\) - \\(self::FRAME_HEADER - 1\\)\\);",
+                // Mp3Scan::resync: with one byte left a found header has no fourth byte to be counted.
+                "if \\(!\\$this->have\\(strlen\\(\\$this->buffer\\) - \\$this->position \\+ 1\\)\\) \\{",
+                // Plan: only Plan::proxied() takes the default, and a proxied upload never reads the plan's status.
+                "public readonly int \\$status = 200,"
+            ]
+        },
+        "DecrementInteger": {
+            "ignoreSourceCodeByRegex": [
+                "return \\(new self\\(\\$handle, is_array\\(\\$stat\\) \\? \\$stat\\['size'\\] : 0\\)\\)->walk\\(\\);",
+                "\\$this->position = max\\(\\$this->position, strlen\\(\\$this->buffer\\) - \\(self::FRAME_HEADER - 1\\)\\);",
+                // Source::fill: the remainder asked for is always positive, so max(0, ...) never wins.
+                ".*fread\\(\\$handle, max\\(1, \\$length - strlen\\(\\$data\\)\\)\\).*",
+                "public readonly int \\$status = 200,",
+                // Pipeline::upload: progress is reported only once bytes were sent, so the total is at least 1.
+                ".*intdiv\\(min\\(\\$sent, \\$total\\) \\* 100, max\\(1, \\$total\\)\\).*"
+            ]
+        },
+        "Minus": {
+            "ignoreSourceCodeByRegex": [
+                "\\$this->position = max\\(\\$this->position, strlen\\(\\$this->buffer\\) - \\(self::FRAME_HEADER - 1\\)\\);"
+            ]
+        },
+        "UnwrapFinally": {
+            "ignoreSourceCodeByRegex": [
+                // Probe::scanMp3 and Probe::opusSeconds: PHP closes a local handle when the method returns.
+                "return Mp3Scan::seconds\\(\\$handle\\);",
+                "if \\(!str_contains\\(\\$first, 'OpusHead'\\)\\) \\{"
+            ]
+        },
+        "CastFloat": {
+            // Probe::container: an int returned from a float function is widened under strict_types too.
+            "ignoreSourceCodeByRegex": ["return \\(float\\) \\$seconds;"]
+        },
+        "CastString": {
+            "ignoreSourceCodeByRegex": [
+                // Body::stringRecord and Body::records: PHP stores a numeric-string key as an int either way.
+                "\\$out\\[\\(string\\) \\$name\\] = .*",
+                // fread and stream_get_contents on an open, readable handle return strings.
+                "\\$first = \\(string\\) fread\\(\\$handle, 512\\);",
+                "\\$tail = \\(string\\) stream_get_contents\\(\\$handle\\);",
+                // Source: path is set whenever stream is null.
+                ".*fopen\\(\\(string\\) \\$this->path, 'rb'\\).*"
+            ]
+        },
+        "Throw_": {
+            // Source::input: called only for a stream that cannot seek, which always has a stream.
+            "ignoreSourceCodeByRegex": ["return \\$this->stream \\?\\? throw new \\\\LogicException\\('A path has no stream\\.'\\);"]
+        },
+        "TrueValue": {
+            "ignoreSourceCodeByRegex": [
+                // Plan: only Plan::proxied() takes the default, and a proxied upload never fetches a URL page.
+                "public readonly bool \\$directAvailable = true",
+                // Callbacks::raised() asks only whether the failure is in the map, not what it maps to.
+                "\\$this->raised\\[\\$failure\\] = true;"
+            ]
+        },
+        "GreaterThan": {
+            "ignoreSourceCodeByRegex": [
+                // Pacing::reserve: a slot exactly one window old, if kept, is waited for 0 s and replaced by now.
+                "\\$this->slots = array_values\\(array_filter\\(\\$this->slots, fn\\(float \\$slot\\): bool => \\$slot > \\$now - \\$this->window\\)\\);"
+            ]
+        },
+        "CastInt": {
+            "ignoreSourceCodeByRegex": [
+                // StreamView::stream_tell: ftell on the open inner stream returns an int.
+                "return \\$this->inner === null \\? 0 : \\(int\\) ftell\\(\\$this->inner\\);"
+            ]
+        }
+    },
+    "minMsi": 80,
+    "testFramework": "phpunit",
+    // Widens a covering-test filter too large for PCRE instead of letting it select no test.
+    "phpUnit": {
+        "customPath": "scripts/infection-phpunit.php"
+    },
+    "initialTestsPhpOptions": "-d xdebug.mode=coverage -d auto_prepend_file=/work/scripts/coverage-filter.php"
+}

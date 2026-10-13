@@ -1,0 +1,61 @@
+{
+    "name": "hushscript/sdk",
+    "description": "Official PHP SDK for the Hushscript transcription API.",
+    "type": "library",
+    "license": "MIT",
+    "homepage": "https://github.com/Hushscript/hushscript-sdk-php",
+    "keywords": ["hushscript", "transcription", "speech-to-text", "sdk"],
+    "support": {
+        "issues": "https://github.com/Hushscript/hushscript-sdk-php/issues",
+        "source": "https://github.com/Hushscript/hushscript-sdk-php"
+    },
+    "require": {
+        "php": "^8.2",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "guzzlehttp/guzzle": "^7.9",
+        "guzzlehttp/promises": "^2.0",
+        "guzzlehttp/psr7": "^2.7",
+        "james-heinrich/getid3": "^1.9",
+        "psr/http-client": "^1.0",
+        "psr/http-message": "^1.1 || ^2.0"
+    },
+    "suggest": {
+        "ext-curl": "Concurrent part uploads; without it, parts go one at a time"
+    },
+    "require-dev": {
+        "ext-curl": "*",
+        "ext-xdebug": "^3.5",
+        "infection/infection": "^0.29",
+        "laravel/pint": "^1.18",
+        "phpstan/phpstan": "^2.0",
+        "phpstan/phpstan-deprecation-rules": "^2.0",
+        "phpstan/phpstan-phpunit": "^2.0",
+        "phpstan/phpstan-strict-rules": "^2.0",
+        "phpunit/php-code-coverage": "^11.0",
+        "phpunit/phpunit": "^11.5",
+        "shipmonk/composer-dependency-analyser": "^1.8",
+        "vimeo/psalm": "^6.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Hushscript\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Hushscript\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "allow-plugins": {},
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "sort-packages": true,
+        "platform": {
+            "php": "8.2.27"
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

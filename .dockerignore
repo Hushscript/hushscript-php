@@ -1,0 +1,6 @@
+.git
+vendor
+*.log
+.DS_Store
+.phpunit.cache
+.pint.cache

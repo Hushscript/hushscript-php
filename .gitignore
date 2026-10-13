@@ -1,0 +1,9 @@
+/vendor/
+*.log
+.DS_Store
+.phpunit.cache/
+.php-cs-fixer.cache
+.pint.cache
+/build/
+
+/mutation-reports/

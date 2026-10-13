@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "php",
+  "bump-minor-pre-major": true,
+  "include-v-in-tag": true,
+  "packages": {
+    ".": {
+      "package-name": "hushscript-sdk-php",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": ["src/Version.php"]
+    }
+  },
+  "draft": true,
+  "force-tag-creation": false,
+  "include-component-in-tag": false,
+  "initial-version": "1.0.0"
+}
