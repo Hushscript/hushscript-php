@@ -4,7 +4,12 @@
     "type": "library",
     "license": "MIT",
     "homepage": "https://github.com/Hushscript/hushscript-sdk-php",
-    "keywords": ["hushscript", "transcription", "speech-to-text", "sdk"],
+    "keywords": [
+        "hushscript",
+        "transcription",
+        "speech-to-text",
+        "sdk"
+    ],
     "support": {
         "issues": "https://github.com/Hushscript/hushscript-sdk-php/issues",
         "source": "https://github.com/Hushscript/hushscript-sdk-php"
